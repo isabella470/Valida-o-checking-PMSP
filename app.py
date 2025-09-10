@@ -6,15 +6,23 @@ from io import BytesIO
 st.title("Gerador de Planilha 3 - Verificação de Planos")
 
 # Input da Planilha 1 via link
-link_planilha1 = st.text_input("Coloque o link da Planilha 1 (Relatórios)")
+link_planilha1 = st.text_input("Coloque o link da Planilha 1 (Google Drive)")
 
 # Upload da Planilha 2
 planilha2_file = st.file_uploader("Escolha a Planilha 2 (De/Para)", type=["xlsx"])
 
+def drive_to_download(url):
+    """Transforma link de compartilhamento do Google Drive em link de download direto"""
+    if "drive.google.com" in url:
+        file_id = url.split("/d/")[1].split("/")[0]
+        return f"https://drive.google.com/uc?export=download&id={file_id}"
+    return url
+
 if link_planilha1 and planilha2_file:
     try:
-        # Baixar Planilha 1 via requests
-        response = requests.get(link_planilha1)
+        # Transformar link e baixar Planilha 1
+        download_link = drive_to_download(link_planilha1)
+        response = requests.get(download_link)
         planilha1_file = BytesIO(response.content)
 
         # Ler planilhas
