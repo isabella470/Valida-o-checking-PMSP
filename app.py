@@ -12,10 +12,6 @@ st.title("Painel de Validação de Checking 📝")
 # Função para transformar Google Sheet em CSV
 # =============================
 def transformar_url_para_csv(url: str, aba: str = "Relatórios") -> str:
-    """
-    Converte link de Google Sheets para CSV direto, de uma aba específica
-    codificando corretamente caracteres especiais na aba.
-    """
     try:
         match = re.search(r"/d/([a-zA-Z0-9-_]+)", url)
         if match:
@@ -36,13 +32,9 @@ def padronizar_colunas(df):
 # =============================
 # Inputs
 # =============================
-link_planilha1 = st.text_input(
-    "Passo 1: Cole o link da Planilha 1 (Relatórios)"
-)
+link_planilha1 = st.text_input("Passo 1: Cole o link da Planilha 1 (Relatórios)")
 
-planilha2_file = st.file_uploader(
-    "Passo 2: Faça upload da Planilha 2 (De/Para)", type=["xlsx"]
-)
+planilha2_file = st.file_uploader("Passo 2: Faça upload da Planilha 2 (De/Para)", type=["xlsx"])
 
 # =============================
 # Processamento
@@ -54,10 +46,8 @@ if link_planilha1 and planilha2_file:
     else:
         with st.spinner("Lendo Planilha 1..."):
             try:
-                # Tentar utf-8 primeiro
                 df1 = pd.read_csv(url_csv, encoding='utf-8')
             except UnicodeDecodeError:
-                # Se der erro, usar latin1
                 df1 = pd.read_csv(url_csv, encoding='latin1')
 
             df2 = pd.read_excel(planilha2_file, engine="openpyxl")
@@ -89,22 +79,27 @@ if link_planilha1 and planilha2_file:
             df2[col_hora_2] = pd.to_datetime(df2[col_hora_2], format='%H:%M', errors='coerce').dt.time
 
             # =============================
-            # Funções de verificação
+            # Funções de verificação (zerando segundos)
             # =============================
+            def zerar_segundos(t):
+                return t.replace(second=0) if pd.notnull(t) else t
+
             def verificar_checking(row):
+                hora2 = zerar_segundos(row[col_hora_2])
                 cond = (
                     (df1[col_veiculo_1] == row[col_veiculo_2]) &
                     (df1[col_data_1] == row[col_data_2]) &
-                    (df1[col_hora_1] == row[col_hora_2]) &
-                    (df1[col_titulo_1] == row[col_titulo_2])
+                    (df1[col_titulo_1] == row[col_titulo_2]) &
+                    (df1[col_hora_1].apply(zerar_segundos) == hora2)
                 )
                 return "Já está no checking" if cond.any() else "Não está no checking"
 
             def verificar_plano(row):
+                hora2 = zerar_segundos(row[col_hora_2])
                 cond = (
                     (df1[col_veiculo_1] == row[col_veiculo_2]) &
                     (df1[col_data_1] == row[col_data_2]) &
-                    (df1[col_hora_1] == row[col_hora_2])
+                    (df1[col_hora_1].apply(zerar_segundos) == hora2)
                 )
                 return "Dentro do plano" if cond.any() else "Fora do plano"
 
@@ -126,11 +121,9 @@ if link_planilha1 and planilha2_file:
                 verde = workbook.add_format({'bg_color': '#C6EFCE'})
                 vermelho = workbook.add_format({'bg_color': '#FFC7CE'})
 
-                # Colunas
                 checking_col = df2.columns.get_loc("Já na checking")
                 plano_col = df2.columns.get_loc("Plano")
 
-                # Cores
                 for row_num, value in enumerate(df2["Já na checking"], 1):
                     if value == "Já está no checking":
                         worksheet.write(row_num, checking_col, value, verde)
