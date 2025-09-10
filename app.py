@@ -1,8 +1,8 @@
 import streamlit as st
 import pandas as pd
-import requests
-from io import BytesIO
+import gdown
 import os
+from io import BytesIO
 
 st.set_page_config(page_title="Gerador Planilha 3", layout="wide")
 st.title("Gerador de Planilha 3 - Verificação de Planos")
@@ -11,36 +11,32 @@ st.title("Gerador de Planilha 3 - Verificação de Planos")
 if not os.path.exists("outputs"):
     os.makedirs("outputs")
 
-# Input do link da Planilha 1
+# Input do link da Planilha 1 (Google Drive)
 link_drive = st.text_input("Cole o link da Planilha 1 (Google Drive)")
-
-# Função para transformar link de compartilhamento em link de download direto
-def transform_drive_link(link):
-    if "drive.google.com" in link:
-        try:
-            file_id = link.split("/d/")[1].split("/")[0]
-            return f"https://drive.google.com/uc?export=download&id={file_id}"
-        except:
-            st.error("Link inválido do Google Drive")
-            return None
-    return link
 
 # Upload da Planilha 2
 planilha2_file = st.file_uploader("Escolha a Planilha 2 (De/Para)", type=["xlsx"])
 
-# Processar planilhas quando ambos inputs existirem
 if link_drive and planilha2_file:
     try:
-        # Transformar link e baixar Planilha 1
-        download_link = transform_drive_link(link_drive)
-        if download_link is None:
-            st.stop()
-        response = requests.get(download_link)
-        planilha1_file = BytesIO(response.content)
+        # Extrair ID do Google Drive
+        if "drive.google.com" in link_drive:
+            try:
+                file_id = link_drive.split("/d/")[1].split("/")[0]
+            except:
+                st.error("Link inválido do Google Drive")
+                st.stop()
+            download_link = f"https://drive.google.com/uc?id={file_id}"
+        else:
+            download_link = link_drive
+
+        # Baixar Planilha 1 com gdown
+        output_path_1 = "planilha1_temp.xlsx"
+        gdown.download(download_link, output_path_1, quiet=False)
 
         # Ler planilhas
-        df1 = pd.read_excel(planilha1_file, engine='openpyxl')
-        df2 = pd.read_excel(planilha2_file, engine='openpyxl')
+        df1 = pd.read_excel(output_path_1, engine="openpyxl")
+        df2 = pd.read_excel(planilha2_file, engine="openpyxl")
 
         # Padronização de colunas
         df1 = df1.rename(columns={
@@ -118,5 +114,3 @@ if link_drive and planilha2_file:
 
     except Exception as e:
         st.error(f"Erro ao processar as planilhas: {e}")
-
-
