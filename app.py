@@ -11,15 +11,25 @@ st.title("Painel de Validação de Checking 📝")
 # =============================
 # Função para transformar Google Sheet em CSV
 # =============================
-def transformar_url_para_csv(url: str) -> str:
+def transformar_url_para_csv(url: str, aba: str = "Relatórios") -> str:
+    """
+    Converte link de Google Sheets para CSV direto, de uma aba específica
+    """
     try:
         match = re.search(r"/d/([a-zA-Z0-9-_]+)", url)
         if match:
             sheet_id = match.group(1)
-            return f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
+            return f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet={aba}"
     except:
         pass
     return None
+
+# =============================
+# Padronizar colunas
+# =============================
+def padronizar_colunas(df):
+    df.columns = df.columns.str.strip().str.lower().str.replace(" ", "_").str.normalize('NFKD').str.encode('ascii', errors='ignore').str.decode('utf-8')
+    return df
 
 # =============================
 # Inputs
@@ -36,7 +46,7 @@ planilha2_file = st.file_uploader(
 # Processamento
 # =============================
 if link_planilha1 and planilha2_file:
-    url_csv = transformar_url_para_csv(link_planilha1)
+    url_csv = transformar_url_para_csv(link_planilha1, aba="Relatórios")
     if url_csv is None:
         st.error("URL de planilha inválida. Verifique o link.")
     else:
@@ -50,42 +60,48 @@ if link_planilha1 and planilha2_file:
             df2 = pd.read_excel(planilha2_file, engine="openpyxl")
 
             # Padronizar colunas
-            df1 = df1.rename(columns={
-                "VEÍCULO BOXNET": "Veículo",
-                "DATA CONTRATAÇÃO": "Data",
-                "HORA VEICULAÇÃO": "Hora",
-                "TÍTULO PEÇA": "Título"
-            })
-            df2 = df2.rename(columns={
-                "Veículo": "Veículo",
-                "DataFonte": "Data",
-                "Hora": "Hora",
-                "Título": "Título"
-            })
+            df1 = padronizar_colunas(df1)
+            df2 = padronizar_colunas(df2)
 
+            # =============================
             # Converter datas e horas
-            df1['Data'] = pd.to_datetime(df1['Data'])
-            df2['Data'] = pd.to_datetime(df2['Data'])
-            df1['Hora'] = pd.to_datetime(df1['Hora'], format='%H:%M').dt.time
-            df2['Hora'] = pd.to_datetime(df2['Hora'], format='%H:%M').dt.time
+            # =============================
+            # Ajuste dos nomes padronizados
+            # Para Planilha 1
+            col_data_1 = "data_contratacao" if "data_contratacao" in df1.columns else df1.columns[1]
+            col_hora_1 = "hora_veiculacao" if "hora_veiculacao" in df1.columns else df1.columns[2]
+            col_veiculo_1 = "veiculo_boxnet" if "veiculo_boxnet" in df1.columns else df1.columns[0]
+            col_titulo_1 = "titulo_peca" if "titulo_peca" in df1.columns else df1.columns[3]
+
+            df1[col_data_1] = pd.to_datetime(df1[col_data_1])
+            df1[col_hora_1] = pd.to_datetime(df1[col_hora_1], format='%H:%M', errors='coerce').dt.time
+
+            # Para Planilha 2
+            col_data_2 = "datafonte" if "datafonte" in df2.columns else df2.columns[1]
+            col_hora_2 = "hora" if "hora" in df2.columns else df2.columns[2]
+            col_veiculo_2 = "veiculo" if "veiculo" in df2.columns else df2.columns[0]
+            col_titulo_2 = "titulo" if "titulo" in df2.columns else df2.columns[3]
+
+            df2[col_data_2] = pd.to_datetime(df2[col_data_2])
+            df2[col_hora_2] = pd.to_datetime(df2[col_hora_2], format='%H:%M', errors='coerce').dt.time
 
             # =============================
             # Funções de verificação
             # =============================
             def verificar_checking(row):
                 cond = (
-                    (df1['Veículo'] == row['Veículo']) &
-                    (df1['Data'] == row['Data']) &
-                    (df1['Hora'] == row['Hora']) &
-                    (df1['Título'] == row['Título'])
+                    (df1[col_veiculo_1] == row[col_veiculo_2]) &
+                    (df1[col_data_1] == row[col_data_2]) &
+                    (df1[col_hora_1] == row[col_hora_2]) &
+                    (df1[col_titulo_1] == row[col_titulo_2])
                 )
                 return "Já está no checking" if cond.any() else "Não está no checking"
 
             def verificar_plano(row):
                 cond = (
-                    (df1['Veículo'] == row['Veículo']) &
-                    (df1['Data'] == row['Data']) &
-                    (df1['Hora'] == row['Hora'])
+                    (df1[col_veiculo_1] == row[col_veiculo_2]) &
+                    (df1[col_data_1] == row[col_data_2]) &
+                    (df1[col_hora_1] == row[col_hora_2])
                 )
                 return "Dentro do plano" if cond.any() else "Fora do plano"
 
@@ -131,4 +147,3 @@ if link_planilha1 and planilha2_file:
                 file_name="planilha3.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
-
