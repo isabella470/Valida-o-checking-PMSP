@@ -28,7 +28,7 @@ def transformar_url_para_csv(url: str, aba: str = "Relatórios") -> str:
 # Padronizar colunas
 # =============================
 def padronizar_colunas(df):
-    df.columns = df.columns.str.strip().str.lower().str.replace(" ", "_").str.normalize('NFKD').str.encode('ascii', errors='ignore').str.decode('utf-8')
+    df.columns = df.columns.str.strip().str.lower().str.replace(" ", "_")
     return df
 
 # =============================
@@ -67,22 +67,20 @@ if link_planilha1 and planilha2_file:
             # Converter datas e horas
             # =============================
             # Ajuste dos nomes padronizados
-            # Para Planilha 1
+            col_veiculo_1 = "veiculo_boxnet" if "veiculo_boxnet" in df1.columns else df1.columns[0]
             col_data_1 = "data_contratacao" if "data_contratacao" in df1.columns else df1.columns[1]
             col_hora_1 = "hora_veiculacao" if "hora_veiculacao" in df1.columns else df1.columns[2]
-            col_veiculo_1 = "veiculo_boxnet" if "veiculo_boxnet" in df1.columns else df1.columns[0]
             col_titulo_1 = "titulo_peca" if "titulo_peca" in df1.columns else df1.columns[3]
 
-            df1[col_data_1] = pd.to_datetime(df1[col_data_1])
-            df1[col_hora_1] = pd.to_datetime(df1[col_hora_1], format='%H:%M', errors='coerce').dt.time
-
-            # Para Planilha 2
+            col_veiculo_2 = "veiculo" if "veiculo" in df2.columns else df2.columns[0]
             col_data_2 = "datafonte" if "datafonte" in df2.columns else df2.columns[1]
             col_hora_2 = "hora" if "hora" in df2.columns else df2.columns[2]
-            col_veiculo_2 = "veiculo" if "veiculo" in df2.columns else df2.columns[0]
             col_titulo_2 = "titulo" if "titulo" in df2.columns else df2.columns[3]
 
-            df2[col_data_2] = pd.to_datetime(df2[col_data_2])
+            df1[col_data_1] = pd.to_datetime(df1[col_data_1], errors='coerce')
+            df2[col_data_2] = pd.to_datetime(df2[col_data_2], errors='coerce')
+
+            df1[col_hora_1] = pd.to_datetime(df1[col_hora_1], format='%H:%M', errors='coerce').dt.time
             df2[col_hora_2] = pd.to_datetime(df2[col_hora_2], format='%H:%M', errors='coerce').dt.time
 
             # =============================
@@ -147,3 +145,4 @@ if link_planilha1 and planilha2_file:
                 file_name="planilha3.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
+
