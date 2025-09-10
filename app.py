@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from urllib.parse import urlparse
 import io
 import re
 
@@ -52,10 +51,11 @@ if link_planilha1 and planilha2_file:
     else:
         with st.spinner("Lendo Planilha 1..."):
             try:
-                df1 = pd.read_csv(url_csv)
-            except Exception as e:
-                st.error(f"Erro ao ler Planilha 1: {e}")
-                st.stop()
+                # Tentar utf-8 primeiro
+                df1 = pd.read_csv(url_csv, encoding='utf-8')
+            except UnicodeDecodeError:
+                # Se der erro, usar latin1
+                df1 = pd.read_csv(url_csv, encoding='latin1')
 
             df2 = pd.read_excel(planilha2_file, engine="openpyxl")
 
@@ -64,9 +64,8 @@ if link_planilha1 and planilha2_file:
             df2 = padronizar_colunas(df2)
 
             # =============================
-            # Converter datas e horas
-            # =============================
             # Ajuste dos nomes padronizados
+            # =============================
             col_veiculo_1 = "veiculo_boxnet" if "veiculo_boxnet" in df1.columns else df1.columns[0]
             col_data_1 = "data_contratacao" if "data_contratacao" in df1.columns else df1.columns[1]
             col_hora_1 = "hora_veiculacao" if "hora_veiculacao" in df1.columns else df1.columns[2]
@@ -77,6 +76,9 @@ if link_planilha1 and planilha2_file:
             col_hora_2 = "hora" if "hora" in df2.columns else df2.columns[2]
             col_titulo_2 = "titulo" if "titulo" in df2.columns else df2.columns[3]
 
+            # =============================
+            # Converter datas e horas
+            # =============================
             df1[col_data_1] = pd.to_datetime(df1[col_data_1], errors='coerce')
             df2[col_data_2] = pd.to_datetime(df2[col_data_2], errors='coerce')
 
@@ -145,4 +147,3 @@ if link_planilha1 and planilha2_file:
                 file_name="planilha3.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
-
