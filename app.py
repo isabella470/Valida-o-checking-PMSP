@@ -3,21 +3,23 @@ import pandas as pd
 import requests
 from io import BytesIO
 
-st.title("Gerador de Planilha 3 - Verificação de Planos via Link")
+st.title("Gerador de Planilha 3 - Verificação de Planos")
 
-# Inputs dos links
+# Input da Planilha 1 via link
 link_planilha1 = st.text_input("Coloque o link da Planilha 1 (Relatórios)")
-link_planilha2 = st.text_input("Coloque o link da Planilha 2 (De/Para)")
 
-if link_planilha1 and link_planilha2:
+# Upload da Planilha 2
+planilha2_file = st.file_uploader("Escolha a Planilha 2 (De/Para)", type=["xlsx"])
+
+if link_planilha1 and planilha2_file:
     try:
-        # Baixar planilhas via requests
-        planilha1_file = BytesIO(requests.get(link_planilha1).content)
-        planilha2_file = BytesIO(requests.get(link_planilha2).content)
+        # Baixar Planilha 1 via requests
+        response = requests.get(link_planilha1)
+        planilha1_file = BytesIO(response.content)
 
         # Ler planilhas
-        df1 = pd.read_excel(planilha1_file)
-        df2 = pd.read_excel(planilha2_file)
+        df1 = pd.read_excel(planilha1_file, engine='openpyxl')
+        df2 = pd.read_excel(planilha2_file, engine='openpyxl')
 
         # Padronização de colunas
         df1 = df1.rename(columns={
@@ -39,7 +41,7 @@ if link_planilha1 and link_planilha2:
         df1['Hora'] = pd.to_datetime(df1['Hora'], format='%H:%M').dt.time
         df2['Hora'] = pd.to_datetime(df2['Hora'], format='%H:%M').dt.time
 
-        # Verificação
+        # Funções de verificação
         def verificar_checking(row):
             cond = (
                 (df1['Veículo'] == row['Veículo']) &
@@ -57,6 +59,7 @@ if link_planilha1 and link_planilha2:
             )
             return "Dentro do plano" if cond.any() else "Fora do plano"
 
+        # Aplicar verificações
         df2['Já na checking'] = df2.apply(verificar_checking, axis=1)
         df2['Plano'] = df2.apply(verificar_plano, axis=1)
 
