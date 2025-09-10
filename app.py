@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import io
 import re
+import requests
 
 st.set_page_config(page_title="Validador de Checking", layout="centered")
 st.title("Painel de Validação de Checking 📝")
@@ -13,12 +14,14 @@ st.title("Painel de Validação de Checking 📝")
 def transformar_url_para_csv(url: str, aba: str = "Relatórios") -> str:
     """
     Converte link de Google Sheets para CSV direto, de uma aba específica
+    codificando corretamente caracteres especiais na aba.
     """
     try:
         match = re.search(r"/d/([a-zA-Z0-9-_]+)", url)
         if match:
             sheet_id = match.group(1)
-            return f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet={aba}"
+            aba_codificada = requests.utils.quote(aba)  # codifica caracteres especiais
+            return f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet={aba_codificada}"
     except:
         pass
     return None
