@@ -2,26 +2,39 @@ import streamlit as st
 import pandas as pd
 import requests
 from io import BytesIO
+import os
 
+st.set_page_config(page_title="Gerador Planilha 3", layout="wide")
 st.title("Gerador de Planilha 3 - Verificação de Planos")
 
-# Input da Planilha 1 via link
-link_planilha1 = st.text_input("Coloque o link da Planilha 1 (Google Drive)")
+# Criar pasta de saída se não existir
+if not os.path.exists("outputs"):
+    os.makedirs("outputs")
+
+# Input do link da Planilha 1
+link_drive = st.text_input("Cole o link da Planilha 1 (Google Drive)")
+
+# Função para transformar link de compartilhamento em link de download direto
+def transform_drive_link(link):
+    if "drive.google.com" in link:
+        try:
+            file_id = link.split("/d/")[1].split("/")[0]
+            return f"https://drive.google.com/uc?export=download&id={file_id}"
+        except:
+            st.error("Link inválido do Google Drive")
+            return None
+    return link
 
 # Upload da Planilha 2
 planilha2_file = st.file_uploader("Escolha a Planilha 2 (De/Para)", type=["xlsx"])
 
-def drive_to_download(url):
-    """Transforma link de compartilhamento do Google Drive em link de download direto"""
-    if "drive.google.com" in url:
-        file_id = url.split("/d/")[1].split("/")[0]
-        return f"https://drive.google.com/uc?export=download&id={file_id}"
-    return url
-
-if link_planilha1 and planilha2_file:
+# Processar planilhas quando ambos inputs existirem
+if link_drive and planilha2_file:
     try:
         # Transformar link e baixar Planilha 1
-        download_link = drive_to_download(link_planilha1)
+        download_link = transform_drive_link(link_drive)
+        if download_link is None:
+            st.stop()
         response = requests.get(download_link)
         planilha1_file = BytesIO(response.content)
 
@@ -72,12 +85,13 @@ if link_planilha1 and planilha2_file:
         df2['Plano'] = df2.apply(verificar_plano, axis=1)
 
         # Gerar Planilha 3 com cores
-        output_path = "planilha3.xlsx"
+        output_path = "outputs/planilha3.xlsx"
         with pd.ExcelWriter(output_path, engine='xlsxwriter') as writer:
             df2.to_excel(writer, index=False, sheet_name='Planilha 3')
             workbook = writer.book
             worksheet = writer.sheets['Planilha 3']
 
+            # Formatação
             verde = workbook.add_format({'bg_color': '#C6EFCE'})
             vermelho = workbook.add_format({'bg_color': '#FFC7CE'})
 
@@ -104,3 +118,5 @@ if link_planilha1 and planilha2_file:
 
     except Exception as e:
         st.error(f"Erro ao processar as planilhas: {e}")
+
+
