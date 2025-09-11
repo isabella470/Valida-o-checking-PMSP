@@ -1,4 +1,4 @@
-# Arquivo: app.py (VERSÃO FINAL COM TRANSFORMAÇÃO DE DADOS)
+# Arquivo: app.py (VERSÃO FINAL COM CORREÇÃO DO DATETIME)
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -6,7 +6,13 @@ import io
 import re
 import requests
 from thefuzz import process, fuzz
-from soudview import parse_soudview
+import datetime # <--- ADICIONAR ESTA LINHA
+
+try:
+    from soudview import parse_soudview
+except ImportError:
+    st.error("ERRO: O arquivo 'soudview.py' não foi encontrado. Por favor, certifique-se de que ele está na mesma pasta que o app.py.")
+    st.stop()
 
 # --- FUNÇÕES GLOBAIS ---
 def transformar_url_para_csv(url: str, aba: str = "Relatórios"):
@@ -20,15 +26,11 @@ def transformar_url_para_csv(url: str, aba: str = "Relatórios"):
 
 def transformar_checking(df_checking_raw):
     """
-    Função MÁGICA que transforma a planilha principal de matriz para lista.
+    Função que transforma a planilha principal de matriz para lista.
     """
-    # Identifica as colunas que são fixas (não são datas)
     id_vars = [col for col in df_checking_raw.columns if not re.match(r'\d{2}/\d{2}', str(col))]
-    
-    # Identifica as colunas que são datas (ex: '01/08')
     date_vars = [col for col in df_checking_raw.columns if re.match(r'\d{2}/\d{2}', str(col))]
     
-    # Transforma (unpivot) a tabela
     df_tidy = df_checking_raw.melt(
         id_vars=id_vars,
         value_vars=date_vars,
@@ -36,14 +38,12 @@ def transformar_checking(df_checking_raw):
         value_name='HORARIO'
     )
     
-    # Limpa registros sem horário
     df_tidy.dropna(subset=['HORARIO'], inplace=True)
     
-    # Cria a coluna de Data completa (assumindo o ano atual, ajuste se necessário)
+    # Pega o ano atual para criar a data completa. Agora funciona com o import.
     ano_atual = datetime.datetime.now().year
     df_tidy['DATA'] = pd.to_datetime(df_tidy['DIA_MES'] + f'/{ano_atual}', format='%d/%m/%Y', errors='coerce')
     
-    # Renomeia a coluna do veículo para um nome padrão
     df_tidy.rename(columns={'EMISSORA': 'VEICULO'}, inplace=True)
     
     return df_tidy[['VEICULO', 'DATA', 'HORARIO']]
@@ -102,20 +102,15 @@ with tab2:
                         response = requests.get(url_csv)
                         response.raise_for_status()
                         
-                        # PASSO 1: Pular linhas de cabeçalho
-                        # IMPORTANTE: Você talvez precise ajustar este número (tente 1, 2, 3 ou 4)
                         df_checking_raw = pd.read_csv(io.StringIO(response.text), skiprows=2)
 
-                        # PASSO 2: Transformar a planilha de matriz para lista
                         df_checking_transformada = transformar_checking(df_checking_raw)
 
-                        # PASSO 3: Comparar!
                         relatorio_final = comparar_planilhas(df_soud, df_checking_transformada)
                         
                         st.subheader("🎉 Relatório Final da Comparação")
                         st.dataframe(relatorio_final)
 
-                        # Download
                         output = io.BytesIO()
                         with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
                             relatorio_final.to_excel(writer, index=False, sheet_name="Relatorio")
