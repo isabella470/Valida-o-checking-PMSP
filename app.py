@@ -1,4 +1,4 @@
-# Arquivo: app.py (VERSÃO FINAL COM LEITURA ROBUSTA)
+# Arquivo: app.py (VERSÃO FINAL SIMPLIFICADA E CORRIGIDA)
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -16,38 +16,29 @@ except ImportError:
 
 # --- FUNÇÕES GLOBAIS ---
 def transformar_url_para_csv(url: str, aba_nome: str = None):
-    """
-    Função robusta para converter URL do Google Sheets em um link de download CSV.
-    Usa o método /export?format=csv, como no seu exemplo.
-    """
     try:
         match = re.search(r"/d/([a-zA-Z0-9-_]+)", url)
         if match:
             sheet_id = match.group(1)
-            # O endpoint /export geralmente pega a primeira aba visível.
-            # Se for necessário especificar, o gid (ID da aba) é mais confiável.
             return f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
     except:
         return None
 
 def comparar_planilhas(df_soud, df_checking):
-    # Nomes das colunas que esperamos na planilha principal (após leitura limpa)
+    # Nomes exatos das colunas que esperamos na planilha principal
     col_veiculo = 'VEÍCULO BOXNET'
     col_data = 'DATA'
     col_horario = 'HORARIO'
     
-    # Padroniza para maiúsculas para garantir a correspondência
-    df_checking.columns = df_checking.columns.str.upper()
-    
-    # Verifica se as colunas essenciais existem
+    # Verifica se as colunas essenciais existem. Se não, para e avisa.
     for col in [col_veiculo, col_data, col_horario]:
         if col not in df_checking.columns:
-            # Converte os nomes para maiúsculas e sem acento para uma segunda tentativa
-            df_checking.columns = df_checking.columns.str.normalize('NFKD').str.encode('ascii', errors='ignore').decode('utf-8')
-            if col not in df_checking.columns:
-                 st.error(f"Erro Crítico: A coluna '{col}' não foi encontrada na planilha principal. Colunas lidas: {df_checking.columns.tolist()}")
-                 return pd.DataFrame()
+            st.error(f"Erro Crítico: A coluna '{col}' não foi encontrada na sua planilha principal.")
+            st.info(f"As colunas que foram encontradas são: {df_checking.columns.tolist()}")
+            st.warning("Verifique se a primeira linha da sua aba no Google Sheets contém exatamente esses nomes de coluna.")
+            return pd.DataFrame() # Para a execução
 
+    # Copia para evitar avisos de manipulação de dados
     df_checking_sp = df_checking[df_checking[col_veiculo].str.contains("SÃO PAULO", case=False, na=False)].copy()
     if df_checking_sp.empty:
         st.warning("Nenhum veículo de 'SÃO PAULO' foi encontrado na planilha principal para comparação.")
@@ -97,18 +88,17 @@ with tab2:
                     st.success(f"{len(df_soud)} veiculações extraídas da Soudview!")
                     url_csv = transformar_url_para_csv(link_planilha_checking)
                     try:
-                        # LEITURA SIMPLIFICADA E ROBUSTA, COMO NO SEU EXEMPLO
                         df_checking = pd.read_csv(url_csv)
-
                         relatorio_final = comparar_planilhas(df_soud, df_checking)
                         
-                        st.subheader("🎉 Relatório Final da Comparação")
-                        st.dataframe(relatorio_final)
+                        if not relatorio_final.empty:
+                            st.subheader("🎉 Relatório Final da Comparação")
+                            st.dataframe(relatorio_final)
 
-                        output = io.BytesIO()
-                        with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-                            relatorio_final.to_excel(writer, index=False, sheet_name="Relatorio")
-                        st.download_button("📥 Baixar Relatório Final", output.getvalue(), "Relatorio_Final.xlsx", "application/vnd.openxmlformats-officedocument-spreadsheetml-sheet", use_container_width=True)
+                            output = io.BytesIO()
+                            with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+                                relatorio_final.to_excel(writer, index=False, sheet_name="Relatorio")
+                            st.download_button("📥 Baixar Relatório Final", output.getvalue(), "Relatorio_Final.xlsx", "application/vnd.openxmlformats-officedocument-spreadsheetml.sheet", use_container_width=True)
 
                     except Exception as e:
                         st.error(f"Ocorreu um erro ao processar a planilha principal: {e}")
