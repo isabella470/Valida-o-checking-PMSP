@@ -14,14 +14,15 @@ def eh_data(texto):
 
 def parse_soudview(df_raw):
     """
-    Versão com lógica de identificação de veículo mais precisa, para não confundir com outros cabeçalhos.
+    Versão com lógica de prioridades corrigida para não confundir
+    'Comercial:' com o nome do veículo.
     """
     dados_estruturados = []
     veiculo_atual = None
     comercial_atual = None
     
     # Lista de palavras-chave que identificam linhas a serem IGNORADAS
-    palavras_chave_ignorar = ['soundview', 'campanha:', 'cliente:', 'comercial:', 'agência:', 'período:']
+    palavras_chave_ignorar = ['soundview', 'campanha:', 'cliente:', 'agência:', 'período:']
 
     for index, row in df_raw.iterrows():
         # Pula a linha se a primeira célula for vazia
@@ -34,7 +35,22 @@ def parse_soudview(df_raw):
         if not primeira_celula:
             continue
 
-        # Verifica se é uma linha de dados (começa com data)
+        # --- ORDEM DE PRIORIDADES CORRETA ---
+
+        # 1. É a linha explícita "Veículo:"?
+        match_veiculo = re.search(r'Veículo\s*:\s*(.*)', primeira_celula, re.IGNORECASE)
+        if match_veiculo:
+            veiculo_atual = match_veiculo.group(1).strip()
+            comercial_atual = None 
+            continue
+
+        # 2. É a linha "Comercial:"?
+        match_comercial = re.search(r'Comercial\s*:\s*(.*)', primeira_celula, re.IGNORECASE)
+        if match_comercial:
+            comercial_atual = match_comercial.group(1).strip()
+            continue
+
+        # 3. É uma linha de dados (data e horários)?
         if eh_data(primeira_celula) and comercial_atual and veiculo_atual:
             data_obj = pd.to_datetime(primeira_celula, dayfirst=True).date()
             for horario in row.iloc[1:].dropna():
@@ -51,19 +67,13 @@ def parse_soudview(df_raw):
                     continue
             continue
 
-        # Procura por "Comercial:" para definir o comercial atual
-        match_comercial = re.search(r'Comercial\s*:\s*(.*)', primeira_celula, re.IGNORECASE)
-        if match_comercial:
-            comercial_atual = match_comercial.group(1).strip()
+        # 4. É um dos outros cabeçalhos que devemos ignorar?
+        eh_para_ignorar = any(keyword in primeira_celula.lower() for keyword in palavras_chave_ignorar)
+        if eh_para_ignorar:
             continue
 
-        # Se não for uma linha de data nem um comercial, verifica se é um cabeçalho a ser ignorado
-        eh_para_ignorar = any(keyword in primeira_celula.lower() for keyword in palavras_chave_ignorar)
-        
-        # Se a linha sobreviveu a todos os filtros (não é data, não é comercial, não é para ignorar),
-        # então ela DEVE ser o nome do veículo.
-        if not eh_para_ignorar:
-            veiculo_atual = primeira_celula
-            comercial_atual = None # Reseta o comercial, pois é um novo bloco de veículo
+        # 5. Se sobreviveu a tudo, É um nome de veículo sozinho.
+        veiculo_atual = primeira_celula
+        comercial_atual = None
 
     return pd.DataFrame(dados_estruturados)
