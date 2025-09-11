@@ -1,3 +1,4 @@
+# Arquivo: app.py (VERSÃO FINAL E MAIS ROBUSTA)
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -28,23 +29,12 @@ def comparar_planilhas(df_soud, df_checking):
             st.warning("Verifique se o arquivo que você subiu tem exatamente esses nomes de coluna.")
             return pd.DataFrame()
 
-    # --- NOVA FUNÇÃO AUXILIAR PARA ZERAR OS SEGUNDOS ---
-    def zerar_segundos(t):
-        if pd.notna(t) and isinstance(t, datetime.time):
-            return t.replace(second=0, microsecond=0)
-        return t
-
     df_checking_sp = df_checking[df_checking[col_veiculo].str.contains("SÃO PAULO", case=False, na=False)].copy()
     if df_checking_sp.empty:
         st.warning("Nenhum veículo de 'SÃO PAULO' foi encontrado na planilha principal para comparação.")
 
-    # Normaliza os dados para a comparação (merge)
     df_checking_sp['DATA_NORM'] = pd.to_datetime(df_checking_sp[col_data], dayfirst=True, errors='coerce').dt.date
-    # --- SEGUNDOS ZERADOS AQUI (PLANILHA PRINCIPAL) ---
-    df_checking_sp['HORARIO_NORM'] = pd.to_datetime(df_checking_sp[col_horario], errors='coerce').dt.time.apply(zerar_segundos)
-    
-    # --- SEGUNDOS ZERADOS AQUI (PLANILHA SOUDVIEW) ---
-    df_soud['Horario'] = df_soud['Horario'].apply(zerar_segundos)
+    df_checking_sp['HORARIO_NORM'] = pd.to_datetime(df_checking_sp[col_horario], errors='coerce').dt.time
 
     veiculos_soudview = df_soud['Veiculo_Soudview'].unique()
     veiculos_checking = df_checking_sp[col_veiculo].unique()
@@ -83,22 +73,28 @@ with tab2:
                 try:
                     df_raw_soud = pd.read_excel(soud_file, header=None)
                     df_soud = parse_soudview(df_raw_soud)
+
                     if df_soud.empty:
                         st.error("Não foi possível extrair dados da Soudview. Verifique se o arquivo contém nomes de veículos e comerciais.")
                     else:
                         st.success(f"{len(df_soud)} veiculações extraídas da Soudview!")
+                        
                         if checking_file.name.endswith('.csv'):
                             df_checking = pd.read_csv(checking_file)
                         else:
                             df_checking = pd.read_excel(checking_file)
+
                         relatorio_final = comparar_planilhas(df_soud, df_checking)
+                        
                         if not relatorio_final.empty:
                             st.subheader("🎉 Relatório Final da Comparação")
                             st.dataframe(relatorio_final)
+
                             output = io.BytesIO()
                             with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
                                 relatorio_final.to_excel(writer, index=False, sheet_name="Relatorio")
-                            st.download_button("📥 Baixar Relatório Final", output.getvalue(), "Relatorio_Final.xlsx", "application/vnd.openxmlformats-officedocument-spreadsheetml.sheet", use_container_width=True)
+                            st.download_button("📥 Baixar Relatório Final", output.getvalue(), "Relatorio_Final.xlsx", "application/vnd.openxmlformats-officedocument-spreadsheetml-sheet", use_container_width=True)
+
                 except Exception as e:
                     st.error(f"Ocorreu um erro durante o processamento: {e}")
                     st.exception(e)
