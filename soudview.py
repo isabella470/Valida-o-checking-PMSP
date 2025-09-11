@@ -1,4 +1,3 @@
-# Arquivo: soudview.py
 import pandas as pd
 import datetime
 import re
@@ -11,18 +10,21 @@ def eh_data(texto):
         return False
 
 def parse_soudview(df_raw):
-    # ... (código completo da função, sem alterações da última versão)
     dados_estruturados = []
     veiculo_atual = None
     comercial_atual = None
+    cabecalhos_ignorados = ['soundview', 'campanha:', 'cliente:']
     for index, row in df_raw.iterrows():
+        if row.isnull().all(): continue
+        if pd.isna(row.iloc[0]): continue
         primeira_celula = str(row.iloc[0]).strip()
-        if pd.isna(row.iloc[0]) or primeira_celula == 'nan': continue
+        if not primeira_celula: continue
         match_veiculo = re.search(r'Veículo\s*:\s*(.*)', primeira_celula, re.IGNORECASE)
         if match_veiculo:
             veiculo_atual = match_veiculo.group(1).strip()
-            comercial_atual = None
+            comercial_atual = None 
             continue
+        eh_cabecalho_conhecido = any(h in primeira_celula.lower() for h in cabecalhos_ignorados)
         match_comercial = re.search(r'Comercial\s*:\s*(.*)', primeira_celula, re.IGNORECASE)
         if match_comercial:
             comercial_atual = match_comercial.group(1).strip()
@@ -35,4 +37,8 @@ def parse_soudview(df_raw):
                     if horario_obj:
                         dados_estruturados.append({'Veiculo_Soudview': veiculo_atual, 'Comercial_Soudview': comercial_atual, 'Data': data_obj, 'Horario': horario_obj})
                 except (ValueError, TypeError): continue
+            continue
+        if not match_comercial and not eh_data(primeira_celula) and not eh_cabecalho_conhecido:
+            veiculo_atual = primeira_celula
+            comercial_atual = None
     return pd.DataFrame(dados_estruturados)
