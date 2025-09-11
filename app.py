@@ -28,35 +28,38 @@ def comparar_planilhas(df_soud, df_checking):
             st.warning("Verifique se o arquivo que você subiu tem exatamente esses nomes de coluna.")
             return pd.DataFrame()
 
+    # --- NOVA FUNÇÃO AUXILIAR PARA ZERAR OS SEGUNDOS ---
+    def zerar_segundos(t):
+        if pd.notna(t) and isinstance(t, datetime.time):
+            return t.replace(second=0, microsecond=0)
+        return t
+
     df_checking_sp = df_checking[df_checking[col_veiculo].str.contains("SÃO PAULO", case=False, na=False)].copy()
     if df_checking_sp.empty:
         st.warning("Nenhum veículo de 'SÃO PAULO' foi encontrado na planilha principal para comparação.")
 
+    # Normaliza os dados para a comparação (merge)
     df_checking_sp['DATA_NORM'] = pd.to_datetime(df_checking_sp[col_data], dayfirst=True, errors='coerce').dt.date
-    df_checking_sp['HORARIO_NORM'] = pd.to_datetime(df_checking_sp[col_horario], errors='coerce').dt.time
+    # --- SEGUNDOS ZERADOS AQUI (PLANILHA PRINCIPAL) ---
+    df_checking_sp['HORARIO_NORM'] = pd.to_datetime(df_checking_sp[col_horario], errors='coerce').dt.time.apply(zerar_segundos)
+    
+    # --- SEGUNDOS ZERADOS AQUI (PLANILHA SOUDVIEW) ---
+    df_soud['Horario'] = df_soud['Horario'].apply(zerar_segundos)
 
     veiculos_soudview = df_soud['Veiculo_Soudview'].unique()
     veiculos_checking = df_checking_sp[col_veiculo].unique()
-    
-    # --- A MÁGICA ACONTECE AQUI ---
-    # 1. Mapeamento Inteligente (Fuzzy Matching)
     mapa_veiculos = {}
     for veiculo_soud in veiculos_soudview:
         if pd.notna(veiculo_soud) and veiculos_checking.size > 0:
             match = process.extractOne(veiculo_soud, veiculos_checking, scorer=fuzz.token_set_ratio)
             if match and match[1] >= 80:
-                mapa_veiculos[veiculo_soud] = match[0] # Guarda o melhor par encontrado
+                mapa_veiculos[veiculo_soud] = match[0]
             else: mapa_veiculos[veiculo_soud] = "NÃO MAPEADO"
         else: mapa_veiculos[veiculo_soud] = "NÃO MAPEADO"
             
-    # 2. Criação da Coluna de Verificação (a que você pediu)
     df_soud['Veiculo_Mapeado'] = df_soud['Veiculo_Soudview'].map(mapa_veiculos)
-    
-    # 3. Cruzamento dos dados
     relatorio = pd.merge(df_soud, df_checking_sp, left_on=['Veiculo_Mapeado', 'Data', 'Horario'], right_on=[col_veiculo, 'DATA_NORM', 'HORARIO_NORM'], how='left', indicator=True)
     relatorio['Status'] = np.where(relatorio['_merge'] == 'both', '✅ Já no Checking', '❌ Não encontrado')
-    
-    # 4. Retorno do Relatório Final com a coluna nova
     return relatorio[['Veiculo_Soudview', 'Comercial_Soudview', 'Data', 'Horario', 'Veiculo_Mapeado', 'Status']]
 
 # --- LAYOUT DO STREAMLIT ---
@@ -81,7 +84,7 @@ with tab2:
                     df_raw_soud = pd.read_excel(soud_file, header=None)
                     df_soud = parse_soudview(df_raw_soud)
                     if df_soud.empty:
-                        st.error("Não foi possível extrair dados da Soudview.")
+                        st.error("Não foi possível extrair dados da Soudview. Verifique se o arquivo contém nomes de veículos e comerciais.")
                     else:
                         st.success(f"{len(df_soud)} veiculações extraídas da Soudview!")
                         if checking_file.name.endswith('.csv'):
