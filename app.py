@@ -97,6 +97,6 @@ with tab2:
 
                 except Exception as e:
                     st.error(f"Ocorreu um erro durante o processamento: {e}")
-                    st.exception(e)
+                    st.exception(e) # Adiciona mais detalhes do erro para depuração
         else:
             st.warning("Por favor, faça o upload dos dois arquivos para iniciar a validação.")
