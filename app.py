@@ -1,4 +1,3 @@
-# Arquivo: app.py (VERSÃO FINAL E FUNCIONAL)
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -10,7 +9,7 @@ from thefuzz import process, fuzz
 try:
     from soudview import parse_soudview
 except ImportError:
-    st.error("ERRO: O arquivo 'soudview.py' não foi encontrado.")
+    st.error("ERRO: O arquivo 'soudview.py' não foi encontrado na mesma pasta do app.")
     st.stop()
 
 # --- FUNÇÕES GLOBAIS ---
@@ -24,27 +23,31 @@ def transformar_url_para_csv(url: str, aba: str = "Relatórios"):
     except: return None
 
 def comparar_planilhas(df_soud, df_checking):
-    # O PULO DO GATO: Usando os nomes de colunas que descobrimos!
-    # Não precisamos mais de um mapa, vamos usar os nomes diretamente.
-    df_checking.columns = df_checking.columns.str.strip().str.upper()
-
-    col_veiculo = 'VEICULO'
+    # --- AJUSTE FINAL E DEFINITIVO AQUI ---
+    # Nomes exatos das colunas que sua planilha principal usa
+    col_veiculo = 'VEÍCULO BOXNET' # Corrigido com acento
     col_data = 'DATA'
     col_horario = 'HORARIO'
 
-    # Verifica se as colunas essenciais existem
+    # Copia para evitar SettingWithCopyWarning
+    df_checking = df_checking.copy()
+    
+    # Verifica se as colunas essenciais existem no DataFrame original
     for col in [col_veiculo, col_data, col_horario]:
         if col not in df_checking.columns:
-            st.error(f"Erro Crítico: A coluna '{col}' não foi encontrada na planilha principal. Verifique o arquivo.")
+            st.error(f"Erro Crítico: A coluna '{col}' não foi encontrada na planilha principal. Colunas encontradas: {df_checking.columns.tolist()}")
             return pd.DataFrame()
 
+    # Filtra apenas veículos de São Paulo
     df_checking_sp = df_checking[df_checking[col_veiculo].str.contains("SÃO PAULO", case=False, na=False)].copy()
     if df_checking_sp.empty:
         st.warning("Nenhum veículo de 'SÃO PAULO' foi encontrado na planilha principal para comparação.")
 
-    df_checking_sp[col_data] = pd.to_datetime(df_checking_sp[col_data], dayfirst=True, errors='coerce').dt.date
-    df_checking_sp[col_horario] = pd.to_datetime(df_checking_sp[col_horario], errors='coerce').dt.time
+    # Normaliza os dados para a comparação (merge)
+    df_checking_sp['DATA_NORM'] = pd.to_datetime(df_checking_sp[col_data], dayfirst=True, errors='coerce').dt.date
+    df_checking_sp['HORARIO_NORM'] = pd.to_datetime(df_checking_sp[col_horario], errors='coerce').dt.time
 
+    # Lógica de Fuzzy Matching
     veiculos_soudview = df_soud['Veiculo_Soudview'].unique()
     veiculos_checking = df_checking_sp[col_veiculo].unique()
     mapa_veiculos = {}
@@ -57,7 +60,16 @@ def comparar_planilhas(df_soud, df_checking):
         else: mapa_veiculos[veiculo_soud] = "NÃO MAPEADO"
             
     df_soud['Veiculo_Mapeado'] = df_soud['Veiculo_Soudview'].map(mapa_veiculos)
-    relatorio = pd.merge(df_soud, df_checking_sp, left_on=['Veiculo_Mapeado', 'Data', 'Horario'], right_on=[col_veiculo, col_data, col_horario], how='left', indicator=True)
+    
+    # Merge Final
+    relatorio = pd.merge(
+        df_soud, 
+        df_checking_sp, 
+        left_on=['Veiculo_Mapeado', 'Data', 'Horario'], 
+        right_on=[col_veiculo, 'DATA_NORM', 'HORARIO_NORM'], 
+        how='left', 
+        indicator=True
+    )
     relatorio['Status'] = np.where(relatorio['_merge'] == 'both', '✅ Já no Checking', '❌ Não encontrado')
     colunas_finais = ['Veiculo_Soudview', 'Comercial_Soudview', 'Data', 'Horario', 'Veiculo_Mapeado', 'Status']
     return relatorio[colunas_finais]
@@ -71,8 +83,8 @@ tab1, tab2 = st.tabs(["Validação Checking", "Validação Soudview"])
 # --- ABA 1: Validação Checking ---
 with tab1:
     st.subheader("Validação entre Planilha de Relatórios e De/Para")
-    # Coloque aqui a lógica da sua primeira aba, se precisar.
-    st.info("Funcionalidade da Aba 1 a ser implementada.")
+    st.info("Esta funcionalidade está em desenvolvimento.")
+    # Adicione aqui a lógica da sua primeira aba quando estiver pronta.
 
 # --- ABA 2: Validação Soudview ---
 with tab2:
