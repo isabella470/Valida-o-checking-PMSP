@@ -1,3 +1,4 @@
+# Arquivo: app.py (VERSÃO FINAL COM TRANSFORMAÇÃO DE DADOS)
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -5,12 +6,7 @@ import io
 import re
 import requests
 from thefuzz import process, fuzz
-
-try:
-    from soudview import parse_soudview
-except ImportError:
-    st.error("ERRO: O arquivo 'soudview.py' não foi encontrado na mesma pasta do app.")
-    st.stop()
+from soudview import parse_soudview
 
 # --- FUNÇÕES GLOBAIS ---
 def transformar_url_para_csv(url: str, aba: str = "Relatórios"):
@@ -22,34 +18,47 @@ def transformar_url_para_csv(url: str, aba: str = "Relatórios"):
             return f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet={aba_codificada}"
     except: return None
 
-def comparar_planilhas(df_soud, df_checking):
-    # --- AJUSTE FINAL E DEFINITIVO AQUI ---
-    # Nomes exatos das colunas que sua planilha principal usa
-    col_veiculo = 'VEÍCULO BOXNET' # Corrigido com acento
-    col_data = 'DATA'
-    col_horario = 'HORARIO'
-
-    # Copia para evitar SettingWithCopyWarning
-    df_checking = df_checking.copy()
+def transformar_checking(df_checking_raw):
+    """
+    Função MÁGICA que transforma a planilha principal de matriz para lista.
+    """
+    # Identifica as colunas que são fixas (não são datas)
+    id_vars = [col for col in df_checking_raw.columns if not re.match(r'\d{2}/\d{2}', str(col))]
     
-    # Verifica se as colunas essenciais existem no DataFrame original
-    for col in [col_veiculo, col_data, col_horario]:
-        if col not in df_checking.columns:
-            st.error(f"Erro Crítico: A coluna '{col}' não foi encontrada na planilha principal. Colunas encontradas: {df_checking.columns.tolist()}")
-            return pd.DataFrame()
+    # Identifica as colunas que são datas (ex: '01/08')
+    date_vars = [col for col in df_checking_raw.columns if re.match(r'\d{2}/\d{2}', str(col))]
+    
+    # Transforma (unpivot) a tabela
+    df_tidy = df_checking_raw.melt(
+        id_vars=id_vars,
+        value_vars=date_vars,
+        var_name='DIA_MES',
+        value_name='HORARIO'
+    )
+    
+    # Limpa registros sem horário
+    df_tidy.dropna(subset=['HORARIO'], inplace=True)
+    
+    # Cria a coluna de Data completa (assumindo o ano atual, ajuste se necessário)
+    ano_atual = datetime.datetime.now().year
+    df_tidy['DATA'] = pd.to_datetime(df_tidy['DIA_MES'] + f'/{ano_atual}', format='%d/%m/%Y', errors='coerce')
+    
+    # Renomeia a coluna do veículo para um nome padrão
+    df_tidy.rename(columns={'EMISSORA': 'VEICULO'}, inplace=True)
+    
+    return df_tidy[['VEICULO', 'DATA', 'HORARIO']]
 
-    # Filtra apenas veículos de São Paulo
-    df_checking_sp = df_checking[df_checking[col_veiculo].str.contains("SÃO PAULO", case=False, na=False)].copy()
+
+def comparar_planilhas(df_soud, df_checking_transformada):
+    df_checking_sp = df_checking_transformada[df_checking_transformada['VEICULO'].str.contains("SÃO PAULO", case=False, na=False)].copy()
     if df_checking_sp.empty:
         st.warning("Nenhum veículo de 'SÃO PAULO' foi encontrado na planilha principal para comparação.")
 
-    # Normaliza os dados para a comparação (merge)
-    df_checking_sp['DATA_NORM'] = pd.to_datetime(df_checking_sp[col_data], dayfirst=True, errors='coerce').dt.date
-    df_checking_sp['HORARIO_NORM'] = pd.to_datetime(df_checking_sp[col_horario], errors='coerce').dt.time
+    df_checking_sp['DATA'] = pd.to_datetime(df_checking_sp['DATA'], errors='coerce').dt.date
+    df_checking_sp['HORARIO'] = pd.to_datetime(df_checking_sp['HORARIO'], errors='coerce').dt.time
 
-    # Lógica de Fuzzy Matching
     veiculos_soudview = df_soud['Veiculo_Soudview'].unique()
-    veiculos_checking = df_checking_sp[col_veiculo].unique()
+    veiculos_checking = df_checking_sp['VEICULO'].unique()
     mapa_veiculos = {}
     for veiculo_soud in veiculos_soudview:
         if pd.notna(veiculo_soud) and veiculos_checking.size > 0:
@@ -60,19 +69,9 @@ def comparar_planilhas(df_soud, df_checking):
         else: mapa_veiculos[veiculo_soud] = "NÃO MAPEADO"
             
     df_soud['Veiculo_Mapeado'] = df_soud['Veiculo_Soudview'].map(mapa_veiculos)
-    
-    # Merge Final
-    relatorio = pd.merge(
-        df_soud, 
-        df_checking_sp, 
-        left_on=['Veiculo_Mapeado', 'Data', 'Horario'], 
-        right_on=[col_veiculo, 'DATA_NORM', 'HORARIO_NORM'], 
-        how='left', 
-        indicator=True
-    )
+    relatorio = pd.merge(df_soud, df_checking_sp, left_on=['Veiculo_Mapeado', 'Data', 'Horario'], right_on=['VEICULO', 'DATA', 'HORARIO'], how='left', indicator=True)
     relatorio['Status'] = np.where(relatorio['_merge'] == 'both', '✅ Já no Checking', '❌ Não encontrado')
-    colunas_finais = ['Veiculo_Soudview', 'Comercial_Soudview', 'Data', 'Horario', 'Veiculo_Mapeado', 'Status']
-    return relatorio[colunas_finais]
+    return relatorio[['Veiculo_Soudview', 'Comercial_Soudview', 'Data', 'Horario', 'Veiculo_Mapeado', 'Status']]
 
 # --- LAYOUT DO STREAMLIT ---
 st.set_page_config(page_title="Validador de Checking", layout="centered")
@@ -80,13 +79,9 @@ st.title("Painel de Validação de Checking 🛠️")
 
 tab1, tab2 = st.tabs(["Validação Checking", "Validação Soudview"])
 
-# --- ABA 1: Validação Checking ---
 with tab1:
-    st.subheader("Validação entre Planilha de Relatórios e De/Para")
-    st.info("Esta funcionalidade está em desenvolvimento.")
-    # Adicione aqui a lógica da sua primeira aba quando estiver pronta.
+    st.info("Funcionalidade da Aba 1 a ser implementada.")
 
-# --- ABA 2: Validação Soudview ---
 with tab2:
     st.subheader("Validação da Soudview vs. Planilha Principal")
     link_planilha_checking = st.text_input("Passo 1: Cole o link da Planilha Principal (Checking)", key="soud_link")
@@ -94,40 +89,39 @@ with tab2:
 
     if st.button("▶️ Iniciar Validação Soudview", use_container_width=True, key="btn_soud"):
         if link_planilha_checking and soud_file:
-            with st.spinner("Analisando... Por favor, aguarde."):
+            with st.spinner("Analisando..."):
                 df_raw_soud = pd.read_excel(soud_file, header=None)
                 df_soud = parse_soudview(df_raw_soud)
 
                 if df_soud.empty:
-                    st.error("Não foi possível extrair dados da Soudview. Verifique o formato do arquivo.")
+                    st.error("Não foi possível extrair dados da Soudview.")
                 else:
                     st.success(f"{len(df_soud)} veiculações extraídas da Soudview!")
-                    
                     url_csv = transformar_url_para_csv(link_planilha_checking)
                     try:
                         response = requests.get(url_csv)
                         response.raise_for_status()
-                        df_checking = pd.read_csv(io.StringIO(response.text))
+                        
+                        # PASSO 1: Pular linhas de cabeçalho
+                        # IMPORTANTE: Você talvez precise ajustar este número (tente 1, 2, 3 ou 4)
+                        df_checking_raw = pd.read_csv(io.StringIO(response.text), skiprows=2)
 
-                        relatorio_final = comparar_planilhas(df_soud, df_checking)
+                        # PASSO 2: Transformar a planilha de matriz para lista
+                        df_checking_transformada = transformar_checking(df_checking_raw)
+
+                        # PASSO 3: Comparar!
+                        relatorio_final = comparar_planilhas(df_soud, df_checking_transformada)
                         
                         st.subheader("🎉 Relatório Final da Comparação")
                         st.dataframe(relatorio_final)
 
-                        # Lógica para download do Excel
+                        # Download
                         output = io.BytesIO()
                         with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-                            relatorio_final.to_excel(writer, index=False, sheet_name="Relatorio_Soudview")
-                        
-                        st.download_button(
-                            label="📥 Baixar Relatório Final em Excel",
-                            data=output.getvalue(),
-                            file_name="Relatorio_Final_Soudview.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            use_container_width=True
-                        )
+                            relatorio_final.to_excel(writer, index=False, sheet_name="Relatorio")
+                        st.download_button("📥 Baixar Relatório Final", output.getvalue(), "Relatorio_Final.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
 
                     except Exception as e:
                         st.error(f"Ocorreu um erro ao processar a planilha principal: {e}")
         else:
-            st.warning("Por favor, preencha os dois campos para iniciar a validação.")
+            st.warning("Por favor, preencha os dois campos.")
