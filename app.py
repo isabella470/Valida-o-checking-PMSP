@@ -6,16 +6,15 @@ import re
 import requests
 from thefuzz import process, fuzz
 
-# Tenta importar a função do arquivo soudview.py
 try:
     from soudview import parse_soudview
 except ImportError:
-    st.error("ERRO: O arquivo 'soudview.py' não foi encontrado. Por favor, certifique-se de que ele está na mesma pasta que o app.py.")
+    st.error("ERRO: O arquivo 'soudview.py' não foi encontrado.")
     st.stop()
 
 # --- FUNÇÕES GLOBAIS ---
-
 def transformar_url_para_csv(url: str, aba: str = "Relatórios"):
+    # ... (código da função sem alteração)
     try:
         match = re.search(r"/d/([a-zA-Z0-9-_]+)", url)
         if match:
@@ -24,103 +23,88 @@ def transformar_url_para_csv(url: str, aba: str = "Relatórios"):
             return f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet={aba_codificada}"
     except: return None
 
-def padronizar_colunas(df):
-    df.columns = df.columns.str.strip().str.lower().str.replace(" ", "_")
-    return df
+def comparar_planilhas(df_soud, df_checking):
+    # Dicionário de mapeamento. ESTA É A PARTE QUE PRECISAMOS CORRIGIR.
+    mapa_colunas = {
+        'VEICULO_BOXNET': 'VEICULO', 
+        'DATA_CONTRATACAO': 'DATA',
+        'HORA_VEICULACAO': 'HORARIO', 
+        'TITULO_PECA': 'COMERCIAL'
+    }
+    
+    original_cols = df_checking.columns.tolist()
+    df_checking.columns = df_checking.columns.str.strip().str.upper()
+    df_checking.rename(columns=mapa_colunas, inplace=True)
+    
+    for col in ['VEICULO', 'DATA', 'HORARIO']:
+        if col not in df_checking.columns:
+            st.error(f"Erro Crítico: A coluna '{col}' não foi encontrada na planilha principal após o mapeamento. Colunas originais encontradas: {original_cols}")
+            return pd.DataFrame()
 
-# --- LAYOUT PRINCIPAL DO APP ---
+    df_checking_sp = df_checking[df_checking['VEICULO'].str.contains("/SÃO PAULO", case=False, na=False)].copy()
+    if df_checking_sp.empty:
+        st.warning("Nenhum veículo de '/SÃO PAULO' foi encontrado na planilha principal para comparação.")
+
+    df_checking_sp['DATA'] = pd.to_datetime(df_checking_sp['DATA'], dayfirst=True, errors='coerce').dt.date
+    df_checking_sp['HORARIO'] = pd.to_datetime(df_checking_sp['HORARIO'], errors='coerce').dt.time
+
+    veiculos_soudview = df_soud['Veiculo_Soudview'].unique()
+    veiculos_checking = df_checking_sp['VEICULO'].unique()
+    mapa_veiculos = {}
+    for veiculo_soud in veiculos_soudview:
+        if pd.notna(veiculo_soud) and veiculos_checking.size > 0:
+            match = process.extractOne(veiculo_soud, veiculos_checking, scorer=fuzz.token_set_ratio)
+            if match and match[1] >= 80:
+                mapa_veiculos[veiculo_soud] = match[0]
+            else:
+                mapa_veiculos[veiculo_soud] = "NÃO MAPEADO"
+        else:
+            mapa_veiculos[veiculo_soud] = "NÃO MAPEADO"
+            
+    df_soud['Veiculo_Mapeado'] = df_soud['Veiculo_Soudview'].map(mapa_veiculos)
+    relatorio = pd.merge(df_soud, df_checking_sp, left_on=['Veiculo_Mapeado', 'Data', 'Horario'], right_on=['VEICULO', 'DATA', 'HORARIO'], how='left', indicator=True)
+    relatorio['Status'] = np.where(relatorio['_merge'] == 'both', '✅ Já no Checking', '❌ Não encontrado')
+    colunas_finais = ['Veiculo_Soudview', 'Comercial_Soudview', 'Data', 'Horario', 'Veiculo_Mapeado', 'Status']
+    return relatorio[colunas_finais]
+
+# --- LAYOUT DO STREAMLIT ---
 st.set_page_config(page_title="Validador de Checking", layout="centered")
-st.title("Painel de Validação de Checking 📝")
+st.title("Painel de Validação de Checking 🛠️")
 
-tab1, tab2 = st.tabs(["Validação Checking", "Validação Soudview"])
+# As abas foram removidas temporariamente para focar 100% em resolver o problema da Soudview.
+# Depois que funcionar, nós as adicionamos de volta em 1 minuto.
+st.header("Validação Soudview (Foco na Resolução)")
 
-# ===================================================================
-# CONTEÚDO DA ABA 1: VALIDAÇÃO CHECKING
-# ===================================================================
-with tab1:
-    st.subheader("Validação entre Planilha de Relatórios e De/Para")
+link_planilha_checking = st.text_input("Passo 1: Cole o link da Planilha Principal (Checking)", key="soud_link")
+soud_file = st.file_uploader("Passo 2: Faça upload da Planilha Soudview", type=["xlsx", "xls", "csv"], key="soud_file")
+debug_mode = st.checkbox("🔍 Ativar Modo Depuração", value=True, key="debug_soud") # Deixei ativado por padrão
 
-    link_planilha1 = st.text_input("Passo 1: Cole o link da Planilha de Relatórios", key="checking_link_tab1")
-    planilha2_file = st.file_uploader("Passo 2: Faça upload da Planilha De/Para", type=["xlsx", "xls", "csv"], key="depara_file_tab1")
+if st.button("▶️ Iniciar Validação", use_container_width=True, key="btn_soud"):
+    if link_planilha_checking and soud_file:
+        with st.spinner("Analisando..."):
+            df_raw_soud = pd.read_excel(soud_file, header=None)
+            df_soud = parse_soudview(df_raw_soud)
 
-    if st.button("Iniciar Validação de Checking", use_container_width=True, key="btn_checking_tab1"):
-        if link_planilha1 and planilha2_file:
-            with st.spinner("Lendo e validando planilhas..."):
-                url_csv = transformar_url_para_csv(link_planilha1, aba="Relatórios")
-                if url_csv is None:
-                    st.error("URL da Planilha de Relatórios é inválida.")
-                else:
-                    try:
-                        response = requests.get(url_csv)
-                        response.raise_for_status()
-                        df1 = pd.read_csv(io.StringIO(response.text))
+            st.success(f"{len(df_soud)} veiculações extraídas da Soudview!")
+            
+            url_csv = transformar_url_para_csv(link_planilha_checking)
+            response = requests.get(url_csv)
+            df_checking = pd.read_csv(io.StringIO(response.text))
+            
+            # --- SUPER DEPURAÇÃO ATIVADA ---
+            if debug_mode:
+                st.info("--- DEPURAÇÃO DA PLANILHA PRINCIPAL (CHECKING) ---")
+                st.write("Abaixo estão as 5 primeiras linhas da sua planilha principal:")
+                st.dataframe(df_checking.head())
+                st.write("**E estes são os nomes EXATOS das colunas que ela contém:**")
+                st.code(df_checking.columns.tolist())
+                st.write("--- FIM DA DEPURAÇÃO ---")
+            # --------------------------------
 
-                        if planilha2_file.name.endswith('.csv'):
-                            df2 = pd.read_csv(planilha2_file)
-                        else:
-                            df2 = pd.read_excel(planilha2_file)
-                        
-                        df1 = padronizar_colunas(df1)
-                        df2 = padronizar_colunas(df2)
-                        
-                        # Sua lógica de comparação aqui...
-                        st.success("Arquivos da Aba 1 lidos com sucesso! Lógica de comparação a ser implementada aqui.")
-                        st.dataframe(df1.head())
-                        st.dataframe(df2.head())
-
-                    except Exception as e:
-                        st.error(f"Ocorreu um erro durante o processamento: {e}")
-        else:
-            st.warning("Por favor, preencha o link e faça o upload do arquivo.")
-
-# ===================================================================
-# CONTEÚDO DA ABA 2: VALIDAÇÃO SOUDVIEW
-# ===================================================================
-with tab2:
-    st.subheader("Validação da Soudview vs. Planilha Principal")
-
-    link_planilha_checking_soud = st.text_input("Passo 1: Cole o link da Planilha Principal (Checking)", key="soud_link_tab2")
-    soud_file = st.file_uploader("Passo 2: Faça upload da Planilha Soudview", type=["xlsx", "xls", "csv"], key="soud_file_tab2")
-    debug_mode = st.checkbox("🔍 Ativar Modo Depuração", key="debug_soud_tab2")
-
-    if st.button("Iniciar Validação Soudview", use_container_width=True, key="btn_soud_tab2"):
-        if link_planilha_checking_soud and soud_file:
-            with st.spinner("Processando Soudview..."):
-                # Leitura Robusta
-                df_raw = pd.read_excel(soud_file, header=None)
+            if not df_soud.empty:
+                relatorio_final = comparar_planilhas(df_soud, df_checking)
                 
-                if debug_mode:
-                    st.info("--- MODO DEPURAÇÃO ATIVO ---")
-                    st.write("Dados brutos lidos da planilha Soudview:")
-                    st.dataframe(df_raw)
-                    st.write("--- FIM DA DEPURAÇÃO ---")
-
-                # Parsing
-                df_soud = parse_soudview(df_raw)
-
-                if df_soud.empty:
-                    st.error("Não foi possível extrair dados da Soudview. Verifique o formato do arquivo com o Modo Depuração.")
-                else:
-                    st.success(f"{len(df_soud)} veiculações extraídas da Soudview!")
-                    st.dataframe(df_soud.head())
-
-                    # Leitura da Planilha Principal
-                    url_csv_checking = transformar_url_para_csv(link_planilha_checking_soud)
-                    if url_csv_checking:
-                        try:
-                            response = requests.get(url_csv_checking)
-                            response.raise_for_status()
-                            df_checking = pd.read_csv(io.StringIO(response.text))
-                            
-                            st.info("Planilha principal lida. Iniciando comparação...")
-                            # A lógica de comparação e relatório final vai aqui
-                            # Exemplo:
-                            # relatorio = comparar_planilhas(df_soud, df_checking)
-                            # st.dataframe(relatorio)
-                            
-                        except Exception as e:
-                            st.error(f"Erro ao ler ou processar a planilha principal: {e}")
-                    else:
-                        st.error("URL da planilha principal é inválida.")
-        else:
-            st.warning("Por favor, preencha o link e o arquivo da Soudview.")
+                st.subheader("Resultado da Comparação")
+                st.dataframe(relatorio_final)
+                
+                # ... (lógica de download aqui) ...
