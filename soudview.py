@@ -14,44 +14,44 @@ def eh_data(texto):
 
 def parse_soudview(df_raw):
     """
-    Versão com lógica de prioridades corrigida para não confundir
-    'Comercial:' com o nome do veículo.
+    Versão final customizada que lê o veículo da última coluna e os dados da primeira.
+    Feita sob medida para o arquivo Soundview_PRESTACAO-DE-SERVICOS.
     """
     dados_estruturados = []
     veiculo_atual = None
     comercial_atual = None
-    
-    # Lista de palavras-chave que identificam linhas a serem IGNORADAS
-    palavras_chave_ignorar = ['soundview', 'campanha:', 'cliente:', 'agência:', 'período:']
 
+    # Tenta extrair o veículo da primeira linha, última coluna (célula mesclada)
+    # O iloc[0, -1] pega a primeira linha, última coluna.
+    primeira_linha = df_raw.iloc[0]
+    ultima_coluna_da_primeira_linha = primeira_linha.dropna().iloc[-1]
+    
+    if isinstance(ultima_coluna_da_primeira_linha, str):
+        veiculo_atual = ultima_coluna_da_primeira_linha.strip()
+
+    # Se não encontrou um veículo no cabeçalho, o arquivo é inválido
+    if not veiculo_atual:
+        st.error("Não foi possível identificar o nome do veículo no cabeçalho do arquivo Soudview.")
+        return pd.DataFrame()
+
+    # Agora, itera pelas linhas para encontrar os comerciais e os dados
     for index, row in df_raw.iterrows():
-        # Pula a linha se a primeira célula for vazia
         if pd.isna(row.iloc[0]):
             continue
             
         primeira_celula = str(row.iloc[0]).strip()
         
-        # Pula a linha se, depois de limpa, estiver vazia
         if not primeira_celula:
             continue
 
-        # --- ORDEM DE PRIORIDADES CORRETA ---
-
-        # 1. É a linha explícita "Veículo:"?
-        match_veiculo = re.search(r'Veículo\s*:\s*(.*)', primeira_celula, re.IGNORECASE)
-        if match_veiculo:
-            veiculo_atual = match_veiculo.group(1).strip()
-            comercial_atual = None 
-            continue
-
-        # 2. É a linha "Comercial:"?
+        # Procura por "Comercial:" para definir o comercial atual
         match_comercial = re.search(r'Comercial\s*:\s*(.*)', primeira_celula, re.IGNORECASE)
         if match_comercial:
             comercial_atual = match_comercial.group(1).strip()
             continue
 
-        # 3. É uma linha de dados (data e horários)?
-        if eh_data(primeira_celula) and comercial_atual and veiculo_atual:
+        # Se a linha começa com uma data e já temos um comercial
+        if eh_data(primeira_celula) and comercial_atual:
             data_obj = pd.to_datetime(primeira_celula, dayfirst=True).date()
             for horario in row.iloc[1:].dropna():
                 try:
@@ -65,15 +65,5 @@ def parse_soudview(df_raw):
                         })
                 except (ValueError, TypeError):
                     continue
-            continue
-
-        # 4. É um dos outros cabeçalhos que devemos ignorar?
-        eh_para_ignorar = any(keyword in primeira_celula.lower() for keyword in palavras_chave_ignorar)
-        if eh_para_ignorar:
-            continue
-
-        # 5. Se sobreviveu a tudo, É um nome de veículo sozinho.
-        veiculo_atual = primeira_celula
-        comercial_atual = None
-
+    
     return pd.DataFrame(dados_estruturados)
