@@ -1,80 +1,64 @@
 import pandas as pd
-import datetime
 import re
-
-def eh_data(texto):
-    """Verifica se um texto pode ser interpretado como uma data."""
-    if not isinstance(texto, str) or len(texto) < 8:
-        return False
-    try:
-        pd.to_datetime(texto, dayfirst=True)
-        return True
-    except (ValueError, TypeError):
-        return False
+import datetime
 
 def parse_soudview(df_raw):
     """
-    Analisador Universal Definitivo: Lida com múltiplos formatos de arquivo Soudview.
+    Versão final e robusta que usa 'forward fill' e agora captura
+    corretamente TODOS os horários de uma mesma linha de data.
     """
-    dados_estruturados = []
-    veiculo_do_cabecalho = None
-    veiculo_do_corpo = None
-    comercial_atual = None
     
-    try:
-        primeira_linha = df_raw.iloc[0]
-        ultima_coluna_valida = primeira_linha.dropna()
-        if not ultima_coluna_valida.empty:
-            valor_canto_direito = ultima_coluna_valida.iloc[-1]
-            if isinstance(valor_canto_direito, str) and len(valor_canto_direito) > 3:
-                veiculo_do_cabecalho = valor_canto_direito.strip()
-    except (IndexError, AttributeError):
-        pass
+    # 1. Cria colunas temporárias extraindo o valor de Veículo e Comercial
+    df_raw['VEICULO_TEMP'] = df_raw.iloc[:, 0].astype(str).str.extract(r'Veículo\s*:\s*(.*)', flags=re.IGNORECASE)
+    df_raw['COMERCIAL_TEMP'] = df_raw.iloc[:, 0].astype(str).str.extract(r'Comercial\s*:\s*(.*)', flags=re.IGNORECASE)
 
-    cabecalhos_ignorados = ['soundview', 'campanha:', 'cliente:', 'agência:', 'período:']
+    # 2. Preenche os valores para baixo (forward fill)
+    df_raw['VEICULO_CONTEXTO'] = df_raw['VEICULO_TEMP'].ffill()
+    df_raw['COMERCIAL_CONTEXTO'] = df_raw['COMERCIAL_TEMP'].ffill()
+
+    # 3. Filtra apenas as linhas que são de dados (cujo primeiro valor é uma data)
+    def eh_data(valor):
+        if not isinstance(valor, str): return False
+        try:
+            pd.to_datetime(valor, dayfirst=True)
+            return True
+        except (ValueError, TypeError):
+            return False
+            
+    df_data_rows = df_raw[df_raw.iloc[:, 0].apply(eh_data)].copy()
     
-    for index, row in df_raw.iterrows():
-        if pd.isna(row.iloc[0]): continue
-        primeira_celula = str(row.iloc[0]).strip()
-        if not primeira_celula: continue
+    if df_data_rows.empty:
+        return pd.DataFrame()
 
-        # Prioridade 1: É a linha explícita "Veículo:"? (CORRIGIDO PARA O PADRÃO FINAL)
-        match_veiculo = re.search(r'Veículo\s*:\s*(.*)', primeira_celula, re.IGNORECASE)
-        if match_veiculo:
-            veiculo_do_corpo = match_veiculo.group(1).strip()
-            comercial_atual = None 
+    # 4. Processa as linhas de dados para extrair CADA horário
+    dados_finais = []
+    for index, row in df_data_rows.iterrows():
+        veiculo = row['VEICULO_CONTEXTO']
+        comercial = row['COMERCIAL_CONTEXTO']
+        
+        try:
+            data = pd.to_datetime(row.iloc[0], dayfirst=True).date()
+        except (ValueError, TypeError):
             continue
 
-        # Prioridade 2: É a linha "Comercial:"?
-        match_comercial = re.search(r'Comercial\s*:\s*(.*)', primeira_celula, re.IGNORECASE)
-        if match_comercial:
-            comercial_atual = match_comercial.group(1).strip()
-            continue
-
-        # Prioridade 3: É uma linha de dados?
-        veiculo_ativo = veiculo_do_corpo if veiculo_do_corpo else veiculo_do_cabecalho
-        if eh_data(primeira_celula) and comercial_atual and veiculo_ativo:
-            data_obj = pd.to_datetime(primeira_celula, dayfirst=True).date()
-            for horario in row.iloc[1:].dropna():
+        # --- LÓGICA CORRIGIDA AQUI ---
+        # Itera por cada célula da segunda coluna em diante
+        for horario_bruto in row.iloc[1:]:
+            # Verifica se a célula não está vazia
+            if pd.notna(horario_bruto):
                 try:
-                    horario_obj = pd.to_datetime(str(horario), errors='coerce').time()
+                    # Tenta converter o valor da célula para um objeto de tempo
+                    horario_obj = pd.to_datetime(str(horario_bruto), errors='coerce').time()
                     if horario_obj:
-                        dados_estruturados.append({
-                            'Veiculo_Soudview': veiculo_ativo,
-                            'Comercial_Soudview': comercial_atual,
-                            'Data': data_obj,
+                        # Se conseguir, adiciona a linha completa aos nossos dados
+                        dados_finais.append({
+                            'Veiculo_Soudview': veiculo,
+                            'Comercial_Soudview': comercial,
+                            'Data': data,
                             'Horario': horario_obj
                         })
-                except (ValueError, TypeError): continue
-            continue
-
-        # Prioridade 4: É um cabeçalho conhecido para ignorar?
-        eh_para_ignorar = any(keyword in primeira_celula.lower() for keyword in cabecalhos_ignorados)
-        if eh_para_ignorar:
-            continue
-
-        # Prioridade 5 (Fallback): Se sobreviveu a tudo, é um nome de veículo sozinho.
-        veiculo_do_corpo = primeira_celula
-        comercial_atual = None
-
-    return pd.DataFrame(dados_estruturados)
+                except (ValueError, TypeError):
+                    # Se não for um formato de hora válido, simplesmente ignora e continua para a próxima célula
+                    continue
+                    
+    return pd.DataFrame(dados_finais)
