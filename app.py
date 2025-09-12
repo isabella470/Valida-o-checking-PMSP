@@ -46,13 +46,14 @@ def comparar_planilhas(df_soud, df_checking):
     # Normaliza datas e horários
     df_checking_sp['DATA_NORM'] = pd.to_datetime(df_checking_sp[col_data], dayfirst=True, errors='coerce').dt.date
     df_checking_sp['HORARIO_NORM'] = pd.to_datetime(df_checking_sp[col_horario], errors='coerce').dt.time
-    df_checking_sp['HORARIO_MINUTO'] = df_checking_sp['HORARIO_NORM'].apply(
-        lambda x: x.strftime('%H:%M') if pd.notna(x) else np.nan
-    )
+    df_checking_sp['HORARIO_MINUTO'] = df_checking_sp['HORARIO_NORM'].apply(lambda x: x.strftime('%H:%M') if pd.notna(x) else np.nan)
 
-    # Converte veículos para string e remove espaços
-    veiculos_soudview = df_soud['Veiculo_Soudview'].dropna().apply(lambda x: str(x).strip()).unique()
-    veiculos_checking = df_checking_sp[col_veiculo].dropna().apply(lambda x: str(x).strip()).unique()
+    # Limpeza de veículos: remover espaços, quebras, padronizar string
+    df_checking_sp[col_veiculo] = df_checking_sp[col_veiculo].astype(str).str.strip().str.replace(r'\s+', '', regex=True)
+    df_soud['Veiculo_Soudview'] = df_soud['Veiculo_Soudview'].astype(str).str.strip().str.replace(r'\s+', '', regex=True)
+
+    veiculos_soudview = df_soud['Veiculo_Soudview'].dropna().unique()
+    veiculos_checking = df_checking_sp[col_veiculo].dropna().unique()
 
     # Fuzzy match com prioridade para correspondência exata
     mapa_veiculos = {}
