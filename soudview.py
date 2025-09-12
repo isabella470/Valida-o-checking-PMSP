@@ -15,16 +15,12 @@ def eh_data(texto):
 def parse_soudview(df_raw):
     """
     Analisador Universal Definitivo: Lida com múltiplos formatos de arquivo Soudview.
-    - Prioriza a busca por "Veículo:" no corpo.
-    - Se não achar, procura por nomes de veículo sozinhos.
-    - Usa o veículo do cabeçalho (canto direito) como um fallback.
     """
     dados_estruturados = []
     veiculo_do_cabecalho = None
     veiculo_do_corpo = None
     comercial_atual = None
     
-    # Estratégia 1: Tenta extrair um veículo global do cabeçalho (canto direito)
     try:
         primeira_linha = df_raw.iloc[0]
         ultima_coluna_valida = primeira_linha.dropna()
@@ -33,9 +29,8 @@ def parse_soudview(df_raw):
             if isinstance(valor_canto_direito, str) and len(valor_canto_direito) > 3:
                 veiculo_do_cabecalho = valor_canto_direito.strip()
     except (IndexError, AttributeError):
-        pass # Ignora se o arquivo for malformado
+        pass
 
-    # Estratégia 2: Itera pelas linhas para encontrar dados e veículos no corpo
     cabecalhos_ignorados = ['soundview', 'campanha:', 'cliente:', 'agência:', 'período:']
     
     for index, row in df_raw.iterrows():
@@ -43,7 +38,7 @@ def parse_soudview(df_raw):
         primeira_celula = str(row.iloc[0]).strip()
         if not primeira_celula: continue
 
-        # Prioridade 1: É a linha explícita "Veículo:"?
+        # Prioridade 1: É a linha explícita "Veículo:"? (CORRIGIDO PARA O PADRÃO FINAL)
         match_veiculo = re.search(r'Veículo\s*:\s*(.*)', primeira_celula, re.IGNORECASE)
         if match_veiculo:
             veiculo_do_corpo = match_veiculo.group(1).strip()
