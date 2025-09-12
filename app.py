@@ -3,8 +3,7 @@ import pandas as pd
 import numpy as np
 import io
 from thefuzz import process, fuzz
-import csv
-import unicodedata
+import csv  # Apenas para detectar separador
 
 try:
     from soudview import parse_soudview
@@ -13,18 +12,7 @@ except ImportError:
     st.stop()
 
 
-# ---------------- Funções auxiliares ---------------- #
-def normalizar(texto):
-    """Remove acentos, coloca em maiúsculas e tira espaços extras."""
-    if pd.isna(texto):
-        return ""
-    texto = str(texto).upper().strip()
-    texto = ''.join(c for c in unicodedata.normalize('NFD', texto) if unicodedata.category(c) != 'Mn')
-    return texto
-
-
 def detectar_separador(file):
-    """Detecta automaticamente o separador do CSV."""
     file.seek(0)
     sample = file.read(1024).decode('utf-8', errors='ignore')
     file.seek(0)
@@ -51,30 +39,20 @@ def comparar_planilhas(df_soud, df_checking):
             st.info(f"Colunas encontradas: {df_checking.columns.tolist()}")
             return pd.DataFrame()
 
-    # Filtra só veículos de São Paulo
     df_checking_sp = df_checking[df_checking[col_veiculo].str.contains("SÃO PAULO", case=False, na=False)].copy()
     df_checking_sp['DATA_NORM'] = pd.to_datetime(df_checking_sp[col_data], dayfirst=True, errors='coerce').dt.date
     df_checking_sp['HORARIO_NORM'] = pd.to_datetime(df_checking_sp[col_horario], errors='coerce').dt.time
 
-    # Normaliza os nomes para fuzzy match
     veiculos_soudview = df_soud['Veiculo_Soudview'].dropna().unique()
     veiculos_checking = df_checking_sp[col_veiculo].dropna().unique()
 
-    veiculos_soudview_norm = [normalizar(v) for v in veiculos_soudview]
-    veiculos_checking_norm = [normalizar(v) for v in veiculos_checking]
-
     mapa_veiculos = {}
-    for v_soud, v_soud_norm in zip(veiculos_soudview, veiculos_soudview_norm):
-        match = process.extractOne(v_soud_norm, veiculos_checking_norm, scorer=fuzz.token_set_ratio)
-        if match and match[1] >= 80:  # score mínimo 80, mais flexível
-            index = veiculos_checking_norm.index(match[0])
-            mapa_veiculos[v_soud] = veiculos_checking[index]
-        else:
-            mapa_veiculos[v_soud] = "NÃO MAPEADO"
+    for veiculo_soud in veiculos_soudview:
+        match = process.extractOne(veiculo_soud, veiculos_checking, scorer=fuzz.token_set_ratio) if veiculos_checking.size > 0 else None
+        mapa_veiculos[veiculo_soud] = match[0] if match and match[1] >= 80 else "NÃO MAPEADO"
 
     df_soud['Veiculo_Mapeado'] = df_soud['Veiculo_Soudview'].map(mapa_veiculos)
 
-    # Merge para verificar status
     relatorio = pd.merge(
         df_soud,
         df_checking_sp,
@@ -88,7 +66,7 @@ def comparar_planilhas(df_soud, df_checking):
     return relatorio[['Veiculo_Soudview', 'Comercial_Soudview', 'Data', 'Horario', 'Veiculo_Mapeado', 'Status']]
 
 
-# ---------------- Streamlit ---------------- #
+# ---------------- STREAMLIT ---------------- #
 st.set_page_config(page_title="Validador de Checking", layout="centered")
 st.title("Painel de Validação de Checking 🛠️")
 
@@ -109,7 +87,7 @@ with tab2:
         else:
             with st.spinner("Analisando..."):
                 try:
-                    # Lê os CSVs de forma robusta
+                    # Lê os CSVs de forma robusta, detectando separador automaticamente
                     df_raw_soud = ler_csv(soud_file)
                     df_checking = ler_csv(checking_file)
 
