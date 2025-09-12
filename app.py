@@ -65,8 +65,8 @@ def comparar_planilhas(df_soud, df_checking):
 
     mapa_veiculos = {}
     for v_soud, v_soud_norm in zip(veiculos_soudview, veiculos_soudview_norm):
-        match = process.extractOne(v_soud_norm, veiculos_checking_norm, scorer=fuzz.token_sort_ratio)
-        if match and match[1] >= 90:  # score mínimo 90
+        match = process.extractOne(v_soud_norm, veiculos_checking_norm, scorer=fuzz.token_set_ratio)
+        if match and match[1] >= 80:  # score mínimo 80, mais flexível
             index = veiculos_checking_norm.index(match[0])
             mapa_veiculos[v_soud] = veiculos_checking[index]
         else:
