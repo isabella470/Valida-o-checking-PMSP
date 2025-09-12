@@ -3,10 +3,13 @@ import pandas as pd
 def parse_soudview(df_raw):
     """
     Parser da planilha Soundview exportada como CSV ou Excel.
-    - Identifica 'Veículo' (coluna 9).
-    - Identifica 'Comercial' (coluna 0).
-    - Reconhece datas (coluna 0).
-    - Extrai todos os horários (coluna 2), mesmo vários na mesma célula.
+
+    Regras:
+    - O nome do veículo aparece em uma das colunas da direita (ex: coluna 9).
+      Esse valor deve ser mantido até mudar.
+    - O comercial aparece em linhas com "Comercial:".
+    - Datas ficam na primeira coluna (coluna 0).
+    - Horários ficam normalmente na coluna 2 (podendo haver vários horários na mesma célula).
     """
 
     dados_finais = []
@@ -17,23 +20,22 @@ def parse_soudview(df_raw):
         primeira_col = str(row.iloc[0]) if pd.notna(row.iloc[0]) else ""
         veiculo_col = str(row.iloc[9]) if row.shape[0] > 9 and pd.notna(row.iloc[9]) else None
 
-        # Detecta veículo
+        # Atualiza veículo se mudar
         if veiculo_col and "Veículo" in veiculo_col:
             veiculo_atual = veiculo_col.replace("Veículo:", "").strip()
-            continue
 
-        # Detecta comercial
+        # Atualiza comercial se mudar
         if "Comercial:" in primeira_col:
             comercial_atual = primeira_col.replace("Comercial:", "").strip()
             continue
 
-        # Detecta data válida
+        # Tenta ler data (primeira coluna)
         try:
             data = pd.to_datetime(primeira_col, dayfirst=True, errors="raise").date()
         except Exception:
             continue
 
-        # Extrai horários da coluna 2
+        # Extrai todos os horários (coluna 2)
         if row.shape[0] > 2 and pd.notna(row.iloc[2]):
             horarios_brutos = str(row.iloc[2]).split()
             for h in horarios_brutos:
