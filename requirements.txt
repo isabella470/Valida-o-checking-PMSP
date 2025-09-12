@@ -2,7 +2,8 @@ streamlit
 pandas
 numpy
 requests
-openpyxl
 thefuzz
 python-levenshtein
+openpyxl
 xlrd
+XlsxWriter
