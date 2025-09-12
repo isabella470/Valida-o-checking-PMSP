@@ -22,11 +22,20 @@ def detectar_separador(file):
     try:
         return sniffer.sniff(sample).delimiter
     except csv.Error:
-        return ';'  # Padrão se não conseguir detectar
+        return ';'
+
+
+def ler_csv_soudview(file):
+    """Lê CSV da Soudview com header=None para compatibilidade com parse_soudview."""
+    sep = detectar_separador(file)
+    file.seek(0)
+    return pd.read_csv(file, sep=sep, header=None, encoding='utf-8')
 
 
 def ler_csv(file):
+    """Lê CSV genérico (Checking)."""
     sep = detectar_separador(file)
+    file.seek(0)
     return pd.read_csv(file, sep=sep, encoding='utf-8')
 
 
@@ -96,8 +105,8 @@ with tab2:
         else:
             with st.spinner("Analisando..."):
                 try:
-                    # Lê os CSVs de forma robusta
-                    df_raw_soud = ler_csv(soud_file)
+                    # Lê os CSVs
+                    df_raw_soud = ler_csv_soudview(soud_file)  # header=None
                     df_checking = ler_csv(checking_file)
 
                     df_soud = parse_soudview(df_raw_soud)
