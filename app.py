@@ -3,8 +3,7 @@ import pandas as pd
 import numpy as np
 import io
 from thefuzz import process, fuzz
-import chardet  # Para detectar encoding automaticamente
-import csv
+import csv  # Apenas para detectar separador
 
 try:
     from soudview import parse_soudview
@@ -13,25 +12,20 @@ except ImportError:
     st.stop()
 
 
-def detectar_encoding(file):
-    rawdata = file.read()
+def detectar_separador(file):
     file.seek(0)
-    result = chardet.detect(rawdata)
-    return result['encoding']
-
-
-def detectar_separador(file, encoding):
-    file.seek(0)
-    sample = file.read(1024).decode(encoding)
+    sample = file.read(1024).decode('utf-8', errors='ignore')
     file.seek(0)
     sniffer = csv.Sniffer()
-    return sniffer.sniff(sample).delimiter
+    try:
+        return sniffer.sniff(sample).delimiter
+    except csv.Error:
+        return ';'  # Padrão se não conseguir detectar
 
 
 def ler_csv(file):
-    encoding = detectar_encoding(file)
-    sep = detectar_separador(file, encoding)
-    return pd.read_csv(file, sep=sep, encoding=encoding)
+    sep = detectar_separador(file)
+    return pd.read_csv(file, sep=sep, encoding='utf-8')
 
 
 def comparar_planilhas(df_soud, df_checking):
@@ -93,7 +87,7 @@ with tab2:
         else:
             with st.spinner("Analisando..."):
                 try:
-                    # Lê os CSVs de forma robusta
+                    # Lê os CSVs de forma robusta, detectando separador automaticamente
                     df_raw_soud = ler_csv(soud_file)
                     df_checking = ler_csv(checking_file)
 
