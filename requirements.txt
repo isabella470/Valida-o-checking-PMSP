@@ -4,5 +4,5 @@ numpy
 thefuzz
 xlsxwriter
 chardet
-fuzzywuzzy[speedup]
-python-levenshtein
+
+
