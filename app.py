@@ -32,8 +32,9 @@ def comparar_planilhas(df_soud, df_checking):
     col_veiculo = 'VEÍCULO BOXNET'
     col_data = 'DATA VEICULAÇÃO'
     col_horario = 'HORA VEICULAÇÃO'
+    col_campanha_checking = 'CAMPANHA'  # ajuste conforme sua planilha principal
 
-    for col in [col_veiculo, col_data, col_horario]:
+    for col in [col_veiculo, col_data, col_horario, col_campanha_checking]:
         if col not in df_checking.columns:
             st.error(f"Erro Crítico: A coluna '{col}' não foi encontrada na planilha principal.")
             st.info(f"Colunas encontradas: {df_checking.columns.tolist()}")
@@ -45,6 +46,9 @@ def comparar_planilhas(df_soud, df_checking):
     # Normaliza datas e horários
     df_checking_sp['DATA_NORM'] = pd.to_datetime(df_checking_sp[col_data], dayfirst=True, errors='coerce').dt.date
     df_checking_sp['HORARIO_NORM'] = pd.to_datetime(df_checking_sp[col_horario], errors='coerce').dt.time
+    df_checking_sp['HORARIO_MINUTO'] = df_checking_sp['HORARIO_NORM'].apply(
+        lambda x: x.strftime('%H:%M') if pd.notna(x) else np.nan
+    )
 
     # Fuzzy match de veículos
     veiculos_soudview = df_soud['Veiculo_Soudview'].dropna().unique()
@@ -69,19 +73,30 @@ def comparar_planilhas(df_soud, df_checking):
     df_soud['Veiculo_Mapeado'] = df_soud['Veiculo_Soudview'].map(mapa_veiculos)
     df_soud['Score_Mapeamento'] = df_soud['Veiculo_Soudview'].map(mapa_scores)
 
-    # Merge seguro
+    # Normaliza horário do Soudview
+    df_soud['HORARIO_MINUTO'] = df_soud['Horario'].apply(lambda x: x.strftime('%H:%M') if pd.notna(x) else np.nan)
+
+    # Merge com base em Veículo + Horário (HH:MM) + Campanha
     relatorio = pd.merge(
         df_soud,
         df_checking_sp,
-        left_on=['Veiculo_Mapeado', 'Data', 'Horario'],
-        right_on=[col_veiculo, 'DATA_NORM', 'HORARIO_NORM'],
+        left_on=['Veiculo_Mapeado', 'HORARIO_MINUTO', 'Comercial_Soudview'],
+        right_on=[col_veiculo, 'HORARIO_MINUTO', col_campanha_checking],
         how='left',
         indicator=True
     )
 
     relatorio['Status'] = np.where(relatorio['_merge'] == 'both', '✅ Já no Checking', '❌ Não encontrado')
 
-    return relatorio[['Veiculo_Soudview', 'Comercial_Soudview', 'Data', 'Horario', 'Veiculo_Mapeado', 'Score_Mapeamento', 'Status']]
+    return relatorio[[
+        'Veiculo_Soudview',
+        'Comercial_Soudview',
+        'Data',
+        'Horario',
+        'Veiculo_Mapeado',
+        'Score_Mapeamento',
+        'Status'
+    ]]
 
 # ---------------- STREAMLIT ----------------
 st.set_page_config(page_title="Validador de Checking", layout="centered")
@@ -104,7 +119,6 @@ with tab2:
         else:
             with st.spinner("Analisando..."):
                 try:
-                    # Lê CSVs
                     df_raw_soud = ler_csv(soud_file)
                     df_checking = ler_csv(checking_file)
 
@@ -114,7 +128,6 @@ with tab2:
                     else:
                         st.success(f"{len(df_soud)} veiculações extraídas da Soudview!")
 
-                        # Comparação
                         relatorio_final = comparar_planilhas(df_soud, df_checking)
                         if not relatorio_final.empty:
                             st.subheader("🎉 Relatório Final da Comparação")
