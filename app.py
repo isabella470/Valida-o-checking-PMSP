@@ -47,17 +47,17 @@ def comparar_planilhas(df_soud, df_checking):
     df_checking_sp['DATA_NORM'] = pd.to_datetime(df_checking_sp[col_data], dayfirst=True, errors='coerce').dt.date
     df_checking_sp['HORARIO_NORM'] = pd.to_datetime(df_checking_sp[col_horario], errors='coerce').dt.time
 
-    # Fuzzy match dos veículos
-    veiculos_soudview = df_soud['Veiculo_Soudview'].dropna().unique()
-    veiculos_checking = df_checking_sp[col_veiculo].dropna().unique()
+    # Fuzzy match dos veículos (idêntico ao código original que funcionava)
+    veiculos_soudview = df_soud['Veiculo_Soudview'].dropna().astype(str).str.strip().unique()
+    veiculos_checking = df_checking_sp[col_veiculo].dropna().astype(str).str.strip().unique()
 
     mapa_veiculos = {}
-    for v_soud in veiculos_soudview:
-        match = process.extractOne(v_soud, veiculos_checking, scorer=fuzz.token_set_ratio)
+    for veiculo_soud in veiculos_soudview:
+        match = process.extractOne(veiculo_soud, veiculos_checking, scorer=fuzz.token_set_ratio)
         if match and match[1] >= 80:
-            mapa_veiculos[v_soud] = match[0]
+            mapa_veiculos[veiculo_soud] = match[0]
         else:
-            mapa_veiculos[v_soud] = "NÃO MAPEADO"
+            mapa_veiculos[veiculo_soud] = "NÃO MAPEADO"
 
     df_soud['Veiculo_Mapeado'] = df_soud['Veiculo_Soudview'].map(mapa_veiculos)
 
