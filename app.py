@@ -16,7 +16,6 @@ def comparar_planilhas(df_soud, df_checking):
     col_data = 'DATA VEICULAÇÃO'
     col_horario = 'HORA VEICULAÇÃO'
 
-    # Verifica se colunas existem
     for col in [col_veiculo, col_data, col_horario]:
         if col not in df_checking.columns:
             st.error(f"Erro Crítico: A coluna '{col}' não foi encontrada na sua planilha principal.")
@@ -24,7 +23,7 @@ def comparar_planilhas(df_soud, df_checking):
             st.warning("Verifique se o arquivo que você subiu no PASSO 1 é a sua planilha principal de checking.")
             return pd.DataFrame()
 
-    # Filtra veículos de São Paulo
+    # Filtra só São Paulo
     df_checking_sp = df_checking[df_checking[col_veiculo].str.contains("SÃO PAULO", case=False, na=False)].copy()
     if df_checking_sp.empty:
         st.warning("Nenhum veículo de 'SÃO PAULO' foi encontrado na planilha principal para comparação.")
@@ -33,9 +32,10 @@ def comparar_planilhas(df_soud, df_checking):
     df_checking_sp['DATA_NORM'] = pd.to_datetime(df_checking_sp[col_data], dayfirst=True, errors='coerce').dt.date
     df_checking_sp['HORARIO_NORM'] = pd.to_datetime(df_checking_sp[col_horario], errors='coerce').dt.time
 
-    # Faz mapeamento de veículos com fuzzy match
-    veiculos_soudview = df_soud['Veiculo_Soudview'].unique()
-    veiculos_checking = df_checking_sp[col_veiculo].unique()
+    # Mapeamento de veículos por fuzzy match
+    veiculos_soudview = df_soud['Veiculo_Soudview'].dropna().unique()
+    veiculos_checking = df_checking_sp[col_veiculo].dropna().unique()
+
     mapa_veiculos = {}
     for veiculo_soud in veiculos_soudview:
         if pd.notna(veiculo_soud) and veiculos_checking.size > 0:
@@ -49,7 +49,7 @@ def comparar_planilhas(df_soud, df_checking):
 
     df_soud['Veiculo_Mapeado'] = df_soud['Veiculo_Soudview'].map(mapa_veiculos)
 
-    # Faz comparação
+    # Faz o merge entre soudview e checking
     relatorio = pd.merge(
         df_soud,
         df_checking_sp,
@@ -64,7 +64,7 @@ def comparar_planilhas(df_soud, df_checking):
     return relatorio[['Veiculo_Soudview', 'Comercial_Soudview', 'Data', 'Horario', 'Veiculo_Mapeado', 'Status']]
 
 
-# ================= STREAMLIT UI =================
+# ---------------- STREAMLIT ---------------- #
 st.set_page_config(page_title="Validador de Checking", layout="centered")
 st.title("Painel de Validação de Checking 🛠️")
 
@@ -76,21 +76,15 @@ with tab1:
 with tab2:
     st.subheader("Validação da Soudview vs. Planilha Principal")
 
-    checking_file = st.file_uploader("Passo 1: Faça upload da Planilha Principal (Checking)", 
-                                     type=["xlsx", "xls", "csv"], key="checking_file")
-    soud_file = st.file_uploader("Passo 2: Faça upload da Planilha Soudview", 
-                                 type=["xlsx", "xls", "csv"], key="soud_file")
+    checking_file = st.file_uploader("Passo 1: Faça upload da Planilha Principal (Checking)", type=["xlsx", "xls", "csv"], key="checking_file")
+    soud_file = st.file_uploader("Passo 2: Faça upload da Planilha Soudview", type=["xlsx", "xls", "csv"], key="soud_file")
 
     if st.button("▶️ Iniciar Validação Soudview", use_container_width=True, key="btn_soud"):
         if checking_file and soud_file:
             with st.spinner("Analisando..."):
                 try:
-                    # Leitura da Soundview
-                    if soud_file.name.endswith('.csv'):
-                        df_raw_soud = pd.read_csv(soud_file, header=None, encoding="latin1")
-                    else:
-                        df_raw_soud = pd.read_excel(soud_file, header=None)
-
+                    # Leitura da planilha soudview
+                    df_raw_soud = pd.read_excel(soud_file, header=None)
                     df_soud = parse_soudview(df_raw_soud)
 
                     if df_soud.empty:
@@ -98,7 +92,7 @@ with tab2:
                     else:
                         st.success(f"{len(df_soud)} veiculações extraídas da Soudview!")
 
-                        # Leitura da planilha principal (checking)
+                        # Leitura da planilha de checking
                         if checking_file.name.endswith('.csv'):
                             df_checking = pd.read_csv(checking_file)
                         else:
@@ -106,10 +100,12 @@ with tab2:
 
                         # Comparação
                         relatorio_final = comparar_planilhas(df_soud, df_checking)
+
                         if not relatorio_final.empty:
                             st.subheader("🎉 Relatório Final da Comparação")
                             st.dataframe(relatorio_final)
 
+                            # Exporta Excel
                             output = io.BytesIO()
                             with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
                                 relatorio_final.to_excel(writer, index=False, sheet_name="Relatorio")
@@ -118,7 +114,7 @@ with tab2:
                                 "📥 Baixar Relatório Final",
                                 output.getvalue(),
                                 "Relatorio_Final.xlsx",
-                                "application/vnd.openxmlformats-officedocument-spreadsheetml.sheet",
+                                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                 use_container_width=True
                             )
                 except Exception as e:
