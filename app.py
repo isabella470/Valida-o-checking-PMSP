@@ -21,7 +21,6 @@ def comparar_planilhas(df_soud, df_checking):
     col_data = 'DATA VEICULAÇÃO'
     col_horario = 'HORA VEICULAÇÃO'
     
-    # Verifica se as colunas essenciais existem.
     for col in [col_veiculo, col_data, col_horario]:
         if col not in df_checking.columns:
             st.error(f"Erro Crítico: A coluna '{col}' não foi encontrada na sua planilha principal.")
@@ -71,6 +70,7 @@ with tab2:
         if checking_file and soud_file:
             with st.spinner("Analisando..."):
                 try:
+                    # Leitura da Soudview
                     df_raw_soud = pd.read_excel(soud_file, header=None)
                     df_soud = parse_soudview(df_raw_soud)
 
@@ -79,11 +79,13 @@ with tab2:
                     else:
                         st.success(f"{len(df_soud)} veiculações extraídas da Soudview!")
                         
+                        # Leitura da Planilha Principal
                         if checking_file.name.endswith('.csv'):
                             df_checking = pd.read_csv(checking_file)
                         else:
                             df_checking = pd.read_excel(checking_file)
 
+                        # Comparação
                         relatorio_final = comparar_planilhas(df_soud, df_checking)
                         
                         if not relatorio_final.empty:
@@ -97,6 +99,6 @@ with tab2:
 
                 except Exception as e:
                     st.error(f"Ocorreu um erro durante o processamento: {e}")
-                    st.exception(e) # Adiciona mais detalhes do erro para depuração
+                    st.exception(e)
         else:
             st.warning("Por favor, faça o upload dos dois arquivos para iniciar a validação.")
