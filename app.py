@@ -21,7 +21,7 @@ def comparar_planilhas(df_soud, df_checking):
         if col not in df_checking.columns:
             st.error(f"Erro Crítico: A coluna '{col}' não foi encontrada na sua planilha principal.")
             st.info(f"As colunas que foram encontradas são: {df_checking.columns.tolist()}")
-            st.warning("Verifique se o arquivo que você subiu no PASSO 1 é a sua planilha principal de checking, não um relatório antigo.")
+            st.warning("Verifique se o arquivo que você subiu no PASSO 1 é a sua planilha principal de checking.")
             return pd.DataFrame()
     df_checking_sp = df_checking[df_checking[col_veiculo].str.contains("SÃO PAULO", case=False, na=False)].copy()
     if df_checking_sp.empty:
