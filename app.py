@@ -50,13 +50,21 @@ def comparar_planilhas(df_soud, df_checking):
         lambda x: x.strftime('%H:%M') if pd.notna(x) else np.nan
     )
 
-    # Fuzzy match de veículos
-    veiculos_soudview = df_soud['Veiculo_Soudview'].dropna().unique()
-    veiculos_checking = df_checking_sp[col_veiculo].dropna().unique()
+    # Converte veículos para string e remove espaços
+    veiculos_soudview = df_soud['Veiculo_Soudview'].dropna().apply(lambda x: str(x).strip()).unique()
+    veiculos_checking = df_checking_sp[col_veiculo].dropna().apply(lambda x: str(x).strip()).unique()
 
+    # Fuzzy match com prioridade para correspondência exata
     mapa_veiculos = {}
     mapa_scores = {}
     for veiculo_soud in veiculos_soudview:
+        # Match exato primeiro
+        if veiculo_soud in veiculos_checking:
+            mapa_veiculos[veiculo_soud] = veiculo_soud
+            mapa_scores[veiculo_soud] = 100
+            continue
+
+        # Se não tiver match exato, usa fuzzy
         res = process.extractOne(veiculo_soud, veiculos_checking, scorer=fuzz.token_set_ratio)
         if res:
             match, score, _ = res
