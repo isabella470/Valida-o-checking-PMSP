@@ -11,24 +11,20 @@ try:
 except ImportError:
     st.error("ERRO: O arquivo 'soudview.py' não foi encontrado.")
     st.stop()
-
+    
 # ---------------- Funções ----------------
-# Sua função para ler CSVs bem formatados
-def detectar_separador(file):
-    file.seek(0)
-    sample = file.read(1024).decode('utf-8', errors='ignore')
-    file.seek(0)
-    sniffer = csv.Sniffer()
-    try:
-        return sniffer.sniff(sample).delimiter
-    except csv.Error:
-        return ';'
-
 def ler_csv(file):
-    sep = detectar_separador(file)
+    file.seek(0)
+    # Tenta detectar o separador, mas usa ';' como padrão se falhar
+    try:
+        dialect = csv.Sniffer().sniff(file.read(1024).decode('utf-8'))
+        sep = dialect.delimiter
+    except (csv.Error, UnicodeDecodeError):
+        sep = ';'
+    file.seek(0)
     return pd.read_csv(file, sep=sep, encoding='utf-8')
 
-# Sua função de comparação melhorada
+
 def comparar_planilhas(df_soud, df_checking):
     col_veiculo = 'VEÍCULO BOXNET'
     col_data = 'DATA VEICULAÇÃO'
@@ -76,7 +72,9 @@ def comparar_planilhas(df_soud, df_checking):
     return relatorio[['Veiculo_Soudview', 'Comercial_Soudview', 'Data', 'Horario', 'Veiculo_Mapeado', 'Score_Mapeamento', 'Status']]
 
 # ---------------- STREAMLIT ----------------
-st.set_page_config(page_title="Validador de Checking", layout="centered")
+# A MUDANÇA É AQUI: layout="wide"
+st.set_page_config(page_title="Validador de Checking", layout="wide") 
+
 st.title("Painel de Validação de Checking 🛠️")
 tab1, tab2 = st.tabs(["Validação Checking", "Validação Soudview"])
 with tab1:
@@ -84,10 +82,13 @@ with tab1:
 
 with tab2:
     st.subheader("Validação da Soudview vs. Planilha Principal")
-    checking_file = st.file_uploader("Passo 1: Faça upload da Planilha Principal (CSV ou Excel)", type=["csv", "xlsx", "xls"])
-    soud_file = st.file_uploader("Passo 2: Faça upload da Planilha Soudview (Excel)", type=["xlsx", "xls"])
+    
+    # Use colunas para organizar melhor os uploads
+    col1, col2 = st.columns(2)
+    with col1:
+        checking_file = st.file_uploader("Passo 1: Upload da Planilha Principal", type=["csv", "xlsx", "xls"])
+        soud_file = st.file_uploader("Passo 2: Upload da Planilha Soudview", type=["xlsx", "xls"])
 
-    # --- NOVO BLOCO: FILTRO DE CAMPANHAS ---
     campanhas_selecionadas = []
     if soud_file:
         @st.cache_data
@@ -101,13 +102,13 @@ with tab2:
         lista_de_campanhas = carregar_e_extrair_campanhas(soud_file)
         
         if lista_de_campanhas:
-            campanhas_selecionadas = st.multiselect(
-                "Passo 3: Selecione as campanhas para INCLUIR na análise",
-                options=lista_de_campanhas,
-                default=lista_de_campanhas
-            )
-    # --- FIM DO NOVO BLOCO ---
-
+            with col2:
+                campanhas_selecionadas = st.multiselect(
+                    "Passo 3: Selecione as campanhas para INCLUIR",
+                    options=lista_de_campanhas,
+                    default=lista_de_campanhas
+                )
+    
     if st.button("▶️ Iniciar Validação Soudview", use_container_width=True):
         if not checking_file or not soud_file:
             st.warning("Por favor, faça o upload dos dois arquivos para iniciar a validação.")
@@ -116,29 +117,4 @@ with tab2:
         else:
             with st.spinner("Analisando..."):
                 try:
-                    soud_file.seek(0)
-                    df_soud = parse_soudview(pd.read_excel(soud_file, header=None, engine=None))
-                    
-                    # FILTRANDO O DATAFRAME COM BASE NA SELEÇÃO DO USUÁRIO
-                    df_soud_filtrado = df_soud[df_soud['Comercial_Soudview'].isin(campanhas_selecionadas)]
-
-                    if checking_file.name.endswith('.csv'):
-                        df_checking = ler_csv(checking_file)
-                    else:
-                        df_checking = pd.read_excel(checking_file)
-
-                    if df_soud_filtrado.empty:
-                        st.error("Nenhuma veiculação encontrada para as campanhas selecionadas.")
-                    else:
-                        st.success(f"{len(df_soud_filtrado)} veiculações extraídas para as campanhas selecionadas!")
-                        relatorio_final = comparar_planilhas(df_soud_filtrado, df_checking)
-                        if not relatorio_final.empty:
-                            st.subheader("🎉 Relatório Final da Comparação")
-                            st.dataframe(relatorio_final)
-                            output = io.BytesIO()
-                            with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-                                relatorio_final.to_excel(writer, index=False, sheet_name="Relatorio")
-                            st.download_button("📥 Baixar Relatório Final", output.getvalue(), "Relatorio_Final.xlsx", "application/vnd.openxmlformats-officedocument-spreadsheetml-sheet", use_container_width=True)
-                except Exception as e:
-                    st.error(f"Ocorreu um erro durante o processamento: {e}")
-                    st.exception(e)
+                    soud
