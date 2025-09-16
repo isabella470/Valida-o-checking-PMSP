@@ -1,9 +1,7 @@
 streamlit
 pandas
 numpy
-requests
-thefuzz
-python-levenshtein
+rapidfuzz
 openpyxl
 xlrd
-XlsxWriter
+xlsxwriter
