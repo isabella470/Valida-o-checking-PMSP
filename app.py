@@ -25,11 +25,9 @@ def ler_csv(file):
     """Lê um arquivo CSV, tentando detectar o separador (vírgula ou ponto e vírgula)."""
     file.seek(0)
     try:
-        # Tenta "cheirar" o dialeto do CSV para encontrar o delimitador
         dialect = csv.Sniffer().sniff(file.read(1024).decode('utf-8'))
         sep = dialect.delimiter
     except (csv.Error, UnicodeDecodeError):
-        # Se falhar, assume ponto e vírgula como padrão
         sep = ';'
     file.seek(0)
     return pd.read_csv(file, sep=sep, encoding='utf-8')
@@ -45,26 +43,20 @@ def carregar_depara(caminho="depara.csv"):
             df = pd.read_excel(caminho)
         
         df.columns = df.columns.str.strip().str.lower()
-        # Normaliza as colunas de veículos para garantir a correspondência
         df['veiculo_soudview'] = df['veiculo_soudview'].apply(normalizar_nome)
         df['veiculos boxnet'] = df['veiculos boxnet'].apply(normalizar_nome)
         st.success("Arquivo De/Para carregado com sucesso!")
         return df
     except FileNotFoundError:
         st.error(f"Erro: O arquivo '{caminho}' não foi encontrado. Verifique se ele está na mesma pasta que o script.")
-        return pd.DataFrame(columns=['veiculo_soudview', 'veiculos boxnet']) # Retorna um DF vazio para evitar erros
+        return pd.DataFrame(columns=['veiculo_soudview', 'veiculos boxnet'])
 
 # ==============================================================================
 # 2. FUNÇÕES DE MAPEAMENTO E COMPARAÇÃO
 # ==============================================================================
 
 def mapear_veiculo(nome, df_depara, veiculos_principais, limite_confiança=85):
-    """
-    Encontra o nome correspondente de um veículo usando uma lógica de 3 passos:
-    1. Procura exata no arquivo De/Para.
-    2. Procura por similaridade (fuzzy match) no arquivo De/Para.
-    3. Procura por similaridade na lista de veículos da planilha principal.
-    """
+    """Encontra o nome correspondente de um veículo usando uma lógica de 3 passos."""
     nome_norm = normalizar_nome(nome)
     if not nome_norm:
         return "NOME VAZIO", None, "⚪ Vazio"
@@ -90,26 +82,18 @@ def mapear_veiculo(nome, df_depara, veiculos_principais, limite_confiança=85):
     return "NÃO ENCONTRADO", None, "❌ Não encontrado"
 
 def comparar_planilhas(df_soud, df_checking, df_depara):
-    """
-    Função principal que orquestra a comparação entre as planilhas Soudview e Checking.
-    """
-    # Nomes das colunas na planilha Soudview (após o parse)
+    """Função principal que orquestra a comparação entre as planilhas."""
+    # Definição dos nomes das colunas
     col_soud_veiculo_orig = 'veiculo_soudview'
     col_soud_data = 'data'
     col_soud_horario = 'horario'
-
-    # Nomes das colunas na planilha Checking (principal)
     col_check_veiculo = 'veículo boxnet'
     col_check_data = 'data veiculação'
     col_check_horario = 'hora veiculação'
     
-    # 1. Normaliza nomes de veículos da Soudview
+    # 1. Normaliza e mapeia os veículos da planilha Soudview
     df_soud[col_soud_veiculo_orig] = df_soud[col_soud_veiculo_orig].apply(normalizar_nome)
-
-    # 2. Obtém a lista de veículos únicos da planilha principal
     veiculos_principais = df_checking[col_check_veiculo].dropna().unique().tolist()
-
-    # 3. Aplica o mapeamento para encontrar o nome padrão do veículo
     resultados = df_soud[col_soud_veiculo_orig].apply(
         lambda x: mapear_veiculo(x, df_depara, veiculos_principais)
     )
@@ -117,31 +101,31 @@ def comparar_planilhas(df_soud, df_checking, df_depara):
     df_soud['score_similaridade'] = [r[1] for r in resultados]
     df_soud['tipo_match'] = [r[2] for r in resultados]
     
-    # 4. PREPARAÇÃO PARA O MERGE (PARTE MAIS IMPORTANTE)
-    # Garante que as colunas-chave em AMBOS os dataframes tenham o mesmo tipo de dado.
-    
+    # 4. PREPARAÇÃO PARA O MERGE (COM A CORREÇÃO DO ValueError)
     df_soud_norm = df_soud.copy()
     df_checking_norm = df_checking.copy()
 
-    # Normaliza Datas para o mesmo formato (objeto date)
-    df_soud_norm['data_merge'] = pd.to_datetime(df_soud_norm[col_soud_data], errors='coerce').dt.date
-    df_checking_norm['data_merge'] = pd.to_datetime(df_checking_norm[col_check_data], dayfirst=True, errors='coerce').dt.date
+    # CORREÇÃO: Converte as chaves de data e hora para string padronizada
+    # Isso evita o ValueError causado por tipos de dados mistos (date/time + None)
+    df_soud_norm['data_merge'] = pd.to_datetime(df_soud_norm[col_soud_data], errors='coerce').dt.strftime('%Y-%m-%d')
+    df_checking_norm['data_merge'] = pd.to_datetime(df_checking_norm[col_check_data], dayfirst=True, errors='coerce').dt.strftime('%Y-%m-%d')
+    df_soud_norm['horario_merge'] = pd.to_datetime(df_soud_norm[col_soud_horario], errors='coerce').dt.strftime('%H:%M:%S')
+    df_checking_norm['horario_merge'] = pd.to_datetime(df_checking_norm[col_check_horario], errors='coerce').dt.strftime('%H:%M:%S')
 
-    # Normaliza Horários para o mesmo formato (objeto time)
-    df_soud_norm['horario_merge'] = pd.to_datetime(df_soud_norm[col_soud_horario], errors='coerce').dt.time
-    df_checking_norm['horario_merge'] = pd.to_datetime(df_checking_norm[col_check_horario], errors='coerce').dt.time
+    # Substitui possíveis valores nulos ('NaT') por uma string vazia para consistência
+    df_soud_norm.fillna({'data_merge': '', 'horario_merge': ''}, inplace=True)
+    df_checking_norm.fillna({'data_merge': '', 'horario_merge': ''}, inplace=True)
 
-    # Normaliza o nome do veículo no Checking para garantir o match com o 'veiculo_mapeado'
     df_checking_norm['veiculo_merge'] = df_checking_norm[col_check_veiculo].apply(normalizar_nome)
 
-    # 5. Merge usando as colunas normalizadas e com os mesmos tipos de dados
+    # 5. Merge seguro utilizando colunas de string
     relatorio = pd.merge(
         df_soud_norm,
         df_checking_norm,
         left_on=['veiculo_mapeado', 'data_merge', 'horario_merge'],
         right_on=['veiculo_merge', 'data_merge', 'horario_merge'],
         how='left',
-        indicator=True # Adiciona uma coluna '_merge' que ajuda a ver o que casou
+        indicator=True
     )
 
     # 6. Limpeza e organização do relatório final
@@ -164,7 +148,6 @@ def comparar_planilhas(df_soud, df_checking, df_depara):
 st.set_page_config(page_title="Validador de Checking", layout="wide") 
 st.title("Painel de Validação de Checking 🛠️")
 
-# Carrega o arquivo De/Para uma única vez
 df_depara = carregar_depara("depara.csv")
 
 st.subheader("Validação da Soudview vs. Planilha Principal")
@@ -180,16 +163,13 @@ df_soud = None
 
 if soud_file:
     try:
-        # Importa a função do arquivo soudview.py
         from soudview import parse_soudview 
         soud_file.seek(0)
         df_soud = parse_soudview(pd.read_excel(soud_file, header=None))
-        
         df_soud.columns = df_soud.columns.str.strip().str.lower()
         
-        # Checagem de segurança para colunas essenciais
         if 'veiculo_soudview' not in df_soud.columns or 'comercial_soudview' not in df_soud.columns:
-            st.error("A planilha Soudview não foi processada corretamente. Verifique o arquivo `soudview.py`.")
+            st.error("A planilha Soudview não foi processada corretamente. Verifique as colunas geradas.")
             df_soud = None
         else:
             campanhas = sorted(df_soud['comercial_soudview'].dropna().unique())
@@ -207,14 +187,12 @@ if st.button("▶️ Iniciar Validação", use_container_width=True, type="prima
         st.error("A validação não pode continuar. Verifique os erros de carregamento dos arquivos acima.")
     else:
         with st.spinner("Analisando dados... Isso pode levar alguns segundos."):
-            # Carregar Planilha Principal (Checking)
             if checking_file.name.endswith('.csv'):
                 df_checking = ler_csv(checking_file)
             else:
                 df_checking = pd.read_excel(checking_file)
             df_checking.columns = df_checking.columns.str.strip().str.lower()
 
-            # Filtrar campanha, se selecionada
             if campanha_selecionada and campanha_selecionada != "**TODAS AS CAMPANHAS**":
                 df_soud_filtrado = df_soud[df_soud['comercial_soudview'] == campanha_selecionada].copy()
             else:
@@ -225,7 +203,6 @@ if st.button("▶️ Iniciar Validação", use_container_width=True, type="prima
             else:
                 st.success(f"{len(df_soud_filtrado)} veiculações da Soudview prontas para análise!")
                 
-                # Chamar a função de comparação principal
                 relatorio_final = comparar_planilhas(df_soud_filtrado, df_checking, df_depara)
 
                 if relatorio_final.empty:
@@ -234,7 +211,6 @@ if st.button("▶️ Iniciar Validação", use_container_width=True, type="prima
                     st.subheader("🎉 Relatório Final da Comparação")
                     st.dataframe(relatorio_final)
 
-                    # Preparar para download
                     output = io.BytesIO()
                     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
                         relatorio_final.to_excel(writer, index=False, sheet_name="Relatorio_Validacao")
