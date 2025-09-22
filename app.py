@@ -130,18 +130,23 @@ col1, col2 = st.columns(2)
 with col1:
     checking_file = st.file_uploader("Passo 1: Upload da Planilha Principal (Checking)", type=["csv", "xlsx", "xls"])
 with col2:
-    soud_file = st.file_uploader("Passo 2: Upload da Planilha Soudview", type=["xlsx", "xls"])
+    soud_file = st.file_uploader("Passo 2: Upload da Planilha Soudview", type=["csv", "xlsx", "xls"])
 
 campanha_selecionada = None
 df_soud = None
 
 if soud_file:
     try:
-        df_soud = pd.read_excel(soud_file)
+        if soud_file.name.endswith('.csv'):
+            df_soud = ler_csv(soud_file)
+        else:
+            df_soud = pd.read_excel(soud_file)
         df_soud.columns = df_soud.columns.str.strip().str.lower()
 
-        if 'veiculo_soudview' not in df_soud.columns or 'comercial_soudview' not in df_soud.columns:
-            st.error("A planilha Soudview não possui as colunas esperadas.")
+        colunas_esperadas = ['veiculo_soudview', 'comercial_soudview', 'data', 'horario']
+        faltando = [col for col in colunas_esperadas if col not in df_soud.columns]
+        if faltando:
+            st.error(f"A planilha Soudview está faltando as colunas: {', '.join(faltando)}")
             df_soud = None
         else:
             campanhas = sorted(df_soud['comercial_soudview'].dropna().unique())
@@ -157,26 +162,19 @@ if st.button("▶️ Iniciar Validação", use_container_width=True, type="prima
         st.error("Erro ao carregar os dados.")
     else:
         with st.spinner("Analisando dados..."):
-            if checking_file.name.endswith('.csv'):
-                df_checking = ler_csv(checking_file)
-            else:
-                df_checking = pd.read_excel(checking_file)
-            df_checking.columns = df_checking.columns.str.strip().str.lower()
-
-            if campanha_selecionada and campanha_selecionada != "**TODAS AS CAMPANHAS**":
-                df_soud_filtrado = df_soud[df_soud['comercial_soudview'] == campanha_selecionada].copy()
-            else:
-                df_soud_filtrado = df_soud.copy()
-
-            if df_soud_filtrado.empty:
-                st.error("Nenhuma veiculação encontrada.")
-            else:
-                relatorio_final = comparar_planilhas(df_soud_filtrado, df_checking, df_depara)
-
-                if relatorio_final.empty:
-                    st.error("O relatório final está vazio.")
+            try:
+                if checking_file.name.endswith('.csv'):
+                    df_checking = ler_csv(checking_file)
                 else:
-                    st.subheader("🎉 Relatório Final da Comparação")
-                    st.dataframe(relatorio_final)
+                    df_checking = pd.read_excel(checking_file)
+                df_checking.columns = df_checking.columns.str.strip().str.lower()
 
-                    output = io.BytesIO()
+                if campanha_selecionada and campanha_selecionada != "**TODAS AS CAMPANHAS**":
+                    df_soud_filtrado = df_soud[df_soud['comercial_soudview'] == campanha_selecionada].copy()
+                else:
+                    df_soud_filtrado = df_soud.copy()
+
+                if df_soud_filtrado.empty:
+                    st.error("Nenhuma veiculação encontrada.")
+                else:
+                    relatorio_final = comparar_planilhas(df_soud_fil
