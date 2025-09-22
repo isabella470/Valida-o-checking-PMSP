@@ -36,8 +36,7 @@ def carregar_depara(caminho="depara.csv"):
         df = pd.read_excel(caminho)
 
     # Normaliza nomes de coluna
-    df.columns = df.columns.str.strip()  # remove espaços
-    df.rename(columns=lambda x: x.lower().strip(), inplace=True)
+    df.columns = df.columns.str.strip().str.lower()  # remove espaços e coloca minúsculas
 
     # Valida e normaliza colunas esperadas
     if 'veiculo_soudview' in df.columns:
@@ -59,7 +58,7 @@ df_depara = carregar_depara("depara.csv")
 
 # --- FUNÇÃO DE MAPEAMENTO ---
 def mapear_veiculo(nome, df_depara, veiculos_principais, limite_confiança=80):
-    nome_norm = nome.lower().strip()
+    nome_norm = str(nome).lower().strip()
 
     # 1. Procura exata no de/para
     encontrado = df_depara[df_depara['veiculo_soudview'] == nome_norm]
@@ -150,7 +149,13 @@ with tab2:
         def carregar_e_extrair_campanhas(arquivo):
             df = parse_soudview(pd.read_excel(arquivo, header=None, engine=None))
             if not df.empty:
-                return sorted(df['comercial_soudview'].unique())
+                # Normaliza nomes de coluna
+                df.columns = df.columns.str.strip().str.lower()
+                if 'comercial_soudview' in df.columns:
+                    return sorted(df['comercial_soudview'].unique())
+                else:
+                    st.warning("⚠️ Coluna 'comercial_soudview' não encontrada no arquivo Soudview.")
+                    return []
             return []
 
         soud_file.seek(0)
@@ -174,7 +179,8 @@ with tab2:
                     # Carrega Soudview
                     soud_file.seek(0)
                     df_soud = parse_soudview(pd.read_excel(soud_file, header=None, engine=None))
-                    
+                    df_soud.columns = df_soud.columns.str.strip().str.lower()  # Normaliza
+
                     if campanha_selecionada == "**TODAS AS CAMPANHAS**":
                         df_soud_filtrado = df_soud
                     else:
@@ -185,9 +191,7 @@ with tab2:
                         df_checking = ler_csv(checking_file)
                     else:
                         df_checking = pd.read_excel(checking_file)
-
-                    # Normaliza nomes das colunas do checking
-                    df_checking.columns = df_checking.columns.str.strip().str.lower()
+                    df_checking.columns = df_checking.columns.str.strip().str.lower()  # Normaliza
 
                     if df_soud_filtrado.empty:
                         st.error("Nenhuma veiculação encontrada para a campanha selecionada.")
