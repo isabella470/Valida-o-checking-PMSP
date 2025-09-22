@@ -4,7 +4,6 @@ import numpy as np
 import io
 from rapidfuzz import process, fuzz
 import csv
-import datetime
 
 # Tenta importar parse_soudview
 try:
@@ -29,27 +28,24 @@ def ler_csv(file):
 # --- CARREGAR DE/PARA FIXO ---
 @st.cache_data
 def carregar_depara(caminho="depara.csv"):
-    # Carrega CSV ou Excel
     if caminho.endswith(".csv"):
         df = pd.read_csv(caminho)
     else:
         df = pd.read_excel(caminho)
 
     # Normaliza nomes de coluna
-    df.columns = df.columns.str.strip().str.lower()  # remove espaços e coloca minúsculas
+    df.columns = df.columns.str.strip().str.lower()
 
-    # Valida e normaliza colunas esperadas
-    if 'veiculo_soudview' in df.columns:
-        df['veiculo_soudview'] = df['veiculo_soudview'].str.lower().str.strip()
-    else:
-        st.warning("⚠️ Coluna 'Veiculo_Soudview' não encontrada no de/para. Certifique-se de que o CSV está correto.")
+    # Ajusta colunas esperadas
+    if 'veiculo_soudview' not in df.columns:
         df['veiculo_soudview'] = ""
-
-    if 'veiculos boxnet' in df.columns:
-        df['veiculos boxnet'] = df['veiculos boxnet'].str.strip()
     else:
-        st.warning("⚠️ Coluna 'Veiculos Boxnet' não encontrada no de/para. Certifique-se de que o CSV está correto.")
+        df['veiculo_soudview'] = df['veiculo_soudview'].str.lower().str.strip()
+
+    if 'veiculos boxnet' not in df.columns:
         df['veiculos boxnet'] = ""
+    else:
+        df['veiculos boxnet'] = df['veiculos boxnet'].str.strip()
 
     return df
 
@@ -148,20 +144,19 @@ with tab2:
         @st.cache_data
         def carregar_e_extrair_campanhas(arquivo):
             df = parse_soudview(pd.read_excel(arquivo, header=None, engine=None))
-            if not df.empty:
-                # Normaliza nomes de coluna
-                df.columns = df.columns.str.strip().str.lower()
-                if 'comercial_soudview' in df.columns:
-                    return sorted(df['comercial_soudview'].unique())
-                else:
-                    st.warning("⚠️ Coluna 'comercial_soudview' não encontrada no arquivo Soudview.")
-                    return []
-            return []
+            if df.empty:
+                return [], "Arquivo vazio"
+            df.columns = df.columns.str.strip().str.lower()
+            if 'comercial_soudview' not in df.columns:
+                return [], "Coluna 'comercial_soudview' não encontrada"
+            return sorted(df['comercial_soudview'].unique()), None
 
         soud_file.seek(0)
-        lista_de_campanhas = carregar_e_extrair_campanhas(soud_file)
-        
-        if lista_de_campanhas:
+        lista_de_campanhas, mensagem_erro = carregar_e_extrair_campanhas(soud_file)
+
+        if mensagem_erro:
+            st.warning(f"⚠️ {mensagem_erro}")
+        elif lista_de_campanhas:
             opcoes_campanha = ["**TODAS AS CAMPANHAS**"] + lista_de_campanhas
             campanha_selecionada = st.selectbox(
                 "Passo 3: Selecione a campanha para analisar",
@@ -179,7 +174,7 @@ with tab2:
                     # Carrega Soudview
                     soud_file.seek(0)
                     df_soud = parse_soudview(pd.read_excel(soud_file, header=None, engine=None))
-                    df_soud.columns = df_soud.columns.str.strip().str.lower()  # Normaliza
+                    df_soud.columns = df_soud.columns.str.strip().str.lower()
 
                     if campanha_selecionada == "**TODAS AS CAMPANHAS**":
                         df_soud_filtrado = df_soud
@@ -191,7 +186,7 @@ with tab2:
                         df_checking = ler_csv(checking_file)
                     else:
                         df_checking = pd.read_excel(checking_file)
-                    df_checking.columns = df_checking.columns.str.strip().str.lower()  # Normaliza
+                    df_checking.columns = df_checking.columns.str.strip().str.lower()
 
                     if df_soud_filtrado.empty:
                         st.error("Nenhuma veiculação encontrada para a campanha selecionada.")
