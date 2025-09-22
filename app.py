@@ -82,7 +82,7 @@ def mapear_veiculo(nome, df_depara, veiculos_principais, limite_confiança=85):
     return "NÃO ENCONTRADO", None, "❌ Não encontrado"
 
 def comparar_planilhas(df_soud, df_checking, df_depara):
-    """Função principal que orquestra a comparação entre as planilhas."""
+    """Função principal que orquestra a comparação, agora ignorando segundos no horário."""
     # Definição dos nomes das colunas
     col_soud_veiculo_orig = 'veiculo_soudview'
     col_soud_data = 'data'
@@ -101,24 +101,27 @@ def comparar_planilhas(df_soud, df_checking, df_depara):
     df_soud['score_similaridade'] = [r[1] for r in resultados]
     df_soud['tipo_match'] = [r[2] for r in resultados]
     
-    # 4. PREPARAÇÃO PARA O MERGE (COM A CORREÇÃO DO ValueError)
+    # 2. PREPARAÇÃO PARA O MERGE
     df_soud_norm = df_soud.copy()
     df_checking_norm = df_checking.copy()
 
-    # CORREÇÃO: Converte as chaves de data e hora para string padronizada
-    # Isso evita o ValueError causado por tipos de dados mistos (date/time + None)
+    # Normaliza as datas para string (formato ANO-MÊS-DIA)
     df_soud_norm['data_merge'] = pd.to_datetime(df_soud_norm[col_soud_data], errors='coerce').dt.strftime('%Y-%m-%d')
     df_checking_norm['data_merge'] = pd.to_datetime(df_checking_norm[col_check_data], dayfirst=True, errors='coerce').dt.strftime('%Y-%m-%d')
-    df_soud_norm['horario_merge'] = pd.to_datetime(df_soud_norm[col_soud_horario], errors='coerce').dt.strftime('%H:%M:%S')
-    df_checking_norm['horario_merge'] = pd.to_datetime(df_checking_norm[col_check_horario], errors='coerce').dt.strftime('%H:%M:%S')
 
-    # Substitui possíveis valores nulos ('NaT') por uma string vazia para consistência
+    # ## CORREÇÃO PRINCIPAL: IGNORAR OS SEGUNDOS ##
+    # Converte os horários para string, mas apenas com HORA e MINUTO (formato HH:MM)
+    df_soud_norm['horario_merge'] = pd.to_datetime(df_soud_norm[col_soud_horario], errors='coerce').dt.strftime('%H:%M')
+    df_checking_norm['horario_merge'] = pd.to_datetime(df_checking_norm[col_check_horario], errors='coerce').dt.strftime('%H:%M')
+
+    # Substitui possíveis valores nulos ('NaT') por uma string vazia
     df_soud_norm.fillna({'data_merge': '', 'horario_merge': ''}, inplace=True)
     df_checking_norm.fillna({'data_merge': '', 'horario_merge': ''}, inplace=True)
 
+    # Normaliza o veículo da planilha checking
     df_checking_norm['veiculo_merge'] = df_checking_norm[col_check_veiculo].apply(normalizar_nome)
 
-    # 5. Merge seguro utilizando colunas de string
+    # 3. Merge seguro utilizando as chaves de texto
     relatorio = pd.merge(
         df_soud_norm,
         df_checking_norm,
@@ -128,7 +131,7 @@ def comparar_planilhas(df_soud, df_checking, df_depara):
         indicator=True
     )
 
-    # 6. Limpeza e organização do relatório final
+    # 4. Limpeza e organização do relatório final
     relatorio['status'] = np.where(relatorio['_merge'] == 'both', '✅ Encontrado no Checking', '❌ Não encontrado no Checking')
     relatorio.rename(columns={col_check_veiculo: 'veiculo_checking_original'}, inplace=True)
 
@@ -148,6 +151,7 @@ def comparar_planilhas(df_soud, df_checking, df_depara):
 st.set_page_config(page_title="Validador de Checking", layout="wide") 
 st.title("Painel de Validação de Checking 🛠️")
 
+# Carrega o arquivo De/Para uma única vez
 df_depara = carregar_depara("depara.csv")
 
 st.subheader("Validação da Soudview vs. Planilha Principal")
@@ -163,6 +167,7 @@ df_soud = None
 
 if soud_file:
     try:
+        # Lembre-se que o arquivo 'soudview.py' com a função 'parse_soudview' deve existir
         from soudview import parse_soudview 
         soud_file.seek(0)
         df_soud = parse_soudview(pd.read_excel(soud_file, header=None))
