@@ -26,7 +26,7 @@ def ler_csv(file):
 
 # --- CARREGAR DE/PARA FIXO ---
 @st.cache_data
-def carregar_depara(caminho="depara.xlsx"):
+def carregar_depara(caminho="depara.csv"):
     if caminho.endswith(".csv"):
         df = pd.read_csv(caminho)
     else:
@@ -35,7 +35,7 @@ def carregar_depara(caminho="depara.xlsx"):
     df['Veiculos Boxnet'] = df['Veiculos Boxnet'].str.strip()
     return df
 
-df_depara = carregar_depara("depara.xlsx")
+df_depara = carregar_depara("depara.csv")
 
 # --- FUNÇÃO DE MAPEAMENTO ---
 def mapear_veiculo(nome, df_depara, veiculos_principais, limite_confiança=80):
@@ -188,3 +188,4 @@ with tab2:
                 except Exception as e:
                     st.error(f"Ocorreu um erro durante o processamento: {e}")
                     st.exception(e)
+
