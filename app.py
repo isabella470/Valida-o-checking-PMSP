@@ -41,8 +41,8 @@ def carregar_depara(caminho="depara.csv"):
         df['veiculo_soudview'] = df['veiculo_soudview'].apply(normalizar_nome)
         df['veiculos boxnet'] = df['veiculos boxnet'].apply(normalizar_nome)
         return df
-    except FileNotFoundError:
-        st.error(f"Arquivo '{caminho}' não encontrado.")
+    except Exception as e:
+        st.error(f"Erro ao carregar De/Para: {e}")
         return pd.DataFrame(columns=['veiculo_soudview', 'veiculos boxnet'])
 
 # ==============================================================================
@@ -137,20 +137,16 @@ df_soud = None
 
 if soud_file:
     try:
-        from soudview import parse_soudview
-        soud_file.seek(0)
-        df_soud = parse_soudview(pd.read_excel(soud_file, header=None))
+        df_soud = pd.read_excel(soud_file)
         df_soud.columns = df_soud.columns.str.strip().str.lower()
 
         if 'veiculo_soudview' not in df_soud.columns or 'comercial_soudview' not in df_soud.columns:
-            st.error("A planilha Soudview não foi processada corretamente.")
+            st.error("A planilha Soudview não possui as colunas esperadas.")
             df_soud = None
         else:
             campanhas = sorted(df_soud['comercial_soudview'].dropna().unique())
             opcoes_campanha = ["**TODAS AS CAMPANHAS**"] + campanhas
             campanha_selecionada = st.selectbox("Passo 3: Selecione a campanha para analisar", options=opcoes_campanha)
-    except ImportError:
-        st.error("Erro: Função `parse_soudview` não encontrada.")
     except Exception as e:
         st.error(f"Erro ao processar Soudview: {e}")
 
@@ -176,3 +172,11 @@ if st.button("▶️ Iniciar Validação", use_container_width=True, type="prima
                 st.error("Nenhuma veiculação encontrada.")
             else:
                 relatorio_final = comparar_planilhas(df_soud_filtrado, df_checking, df_depara)
+
+                if relatorio_final.empty:
+                    st.error("O relatório final está vazio.")
+                else:
+                    st.subheader("🎉 Relatório Final da Comparação")
+                    st.dataframe(relatorio_final)
+
+                    output = io.BytesIO()
