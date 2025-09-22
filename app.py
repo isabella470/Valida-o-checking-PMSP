@@ -2,18 +2,22 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import io
-from rapidfuzz import process, fuzz
 import csv
+from rapidfuzz import process, fuzz
+from unidecode import unidecode
+import re
 
-# Tenta importar parse_soudview
-try:
-    from soudview import parse_soudview
-except ImportError:
-    st.error("ERRO: O arquivo 'soudview.py' não foi encontrado.")
-    st.stop()
+# Função de normalização
+def normalizar_nome(nome):
+    if pd.isna(nome):
+        return ""
+    nome = str(nome).lower().strip()
+    nome = unidecode(nome)  # remove acentos
+    nome = re.sub(r'[^a-z0-9 ]', '', nome)  # remove caracteres especiais
+    nome = re.sub(r'\s+', ' ', nome)  # remove espaços extras
+    return nome
 
-# ---------------- FUNÇÕES ----------------
-
+# Função para ler CSV
 def ler_csv(file):
     file.seek(0)
     try:
@@ -24,68 +28,54 @@ def ler_csv(file):
     file.seek(0)
     return pd.read_csv(file, sep=sep, encoding='utf-8')
 
-
-# --- CARREGAR DE/PARA FIXO ---
+# Carregar De/Para
 @st.cache_data
 def carregar_depara(caminho="depara.csv"):
     if caminho.endswith(".csv"):
         df = pd.read_csv(caminho)
     else:
         df = pd.read_excel(caminho)
-
-    # Normaliza nomes de coluna
     df.columns = df.columns.str.strip().str.lower()
-
-    # Ajusta colunas esperadas
-    if 'veiculo_soudview' not in df.columns:
-        df['veiculo_soudview'] = ""
-    else:
-        df['veiculo_soudview'] = df['veiculo_soudview'].str.lower().str.strip()
-
-    if 'veiculos boxnet' not in df.columns:
-        df['veiculos boxnet'] = ""
-    else:
-        df['veiculos boxnet'] = df['veiculos boxnet'].str.strip()
-
+    df['veiculo_soudview'] = df.get('veiculo_soudview', "").apply(normalizar_nome)
+    df['veiculos boxnet'] = df.get('veiculos boxnet', "").apply(normalizar_nome)
     return df
 
 df_depara = carregar_depara("depara.csv")
 
-
-# --- FUNÇÃO DE MAPEAMENTO ---
+# Função de mapeamento
 def mapear_veiculo(nome, df_depara, veiculos_principais, limite_confiança=80):
-    nome_norm = str(nome).lower().strip()
+    nome_norm = normalizar_nome(nome)
 
-    # 1. Procura exata no de/para
+    # 1️⃣ Procura exata no de/para
     encontrado = df_depara[df_depara['veiculo_soudview'] == nome_norm]
     if not encontrado.empty:
         return encontrado['veiculos boxnet'].values[0], None, "✅ De/Para"
 
-    # 2. Fuzzy match no de/para
+    # 2️⃣ Fuzzy match no de/para
     candidatos = df_depara['veiculo_soudview'].tolist()
     melhor, score, _ = process.extractOne(nome_norm, candidatos, scorer=fuzz.token_sort_ratio)
     if score >= limite_confiança:
         veiculo_boxnet = df_depara[df_depara['veiculo_soudview'] == melhor]['veiculos boxnet'].values[0]
         return veiculo_boxnet, score, "🤖 Fuzzy De/Para"
 
-    # 3. Fuzzy match nos veículos principais (planilha checking)
-    melhor2, score2, _ = process.extractOne(nome_norm, veiculos_principais, scorer=fuzz.token_sort_ratio)
+    # 3️⃣ Fuzzy match nos veículos principais
+    veiculos_principais_norm = [normalizar_nome(v) for v in veiculos_principais]
+    melhor2, score2, _ = process.extractOne(nome_norm, veiculos_principais_norm, scorer=fuzz.token_sort_ratio)
     if score2 >= limite_confiança:
         return melhor2, score2, "🤖 Fuzzy Checking"
 
     return "NÃO ENCONTRADO", None, "❌ Não encontrado"
 
-
-# --- FUNÇÃO DE COMPARAÇÃO ---
+# Função de comparação
 def comparar_planilhas(df_soud, df_checking):
     col_veiculo = 'veículo boxnet'
     col_data = 'data veiculação'
     col_horario = 'hora veiculação'
 
-    # Normaliza os nomes da Soudview
-    df_soud['veiculo_normalizado'] = df_soud['veiculo_soudview'].str.lower().str.strip()
+    # Normaliza nomes da Soudview
+    df_soud['veiculo_soudview'] = df_soud['veiculo_soudview'].apply(normalizar_nome)
 
-    # Lista de veículos principais da planilha checking
+    # Veículos principais do Checking
     veiculos_principais = df_checking[col_veiculo].dropna().unique().tolist()
 
     # Aplica mapeamento
@@ -94,7 +84,7 @@ def comparar_planilhas(df_soud, df_checking):
     df_soud['score_similaridade'] = [r[1] for r in resultados]
     df_soud['tipo_match'] = [r[2] for r in resultados]
 
-    # Normaliza data/hora
+    # Normaliza data/hora para merge
     df_checking_sp = df_checking[df_checking[col_veiculo].str.contains("SÃO PAULO", case=False, na=False)].copy()
     df_checking_sp['data_norm'] = pd.to_datetime(df_checking_sp[col_data], dayfirst=True, errors='coerce').dt.date
     df_checking_sp['horario_norm'] = pd.to_datetime(df_checking_sp[col_horario], errors='coerce').dt.time
@@ -108,7 +98,6 @@ def comparar_planilhas(df_soud, df_checking):
         how='left',
         indicator=True
     )
-
     relatorio['status'] = np.where(relatorio['_merge'] == 'both', '✅ Já no Checking', '❌ Não encontrado')
     relatorio.rename(columns={col_veiculo: 'veiculo_principal_encontrado'}, inplace=True)
 
@@ -121,16 +110,11 @@ def comparar_planilhas(df_soud, df_checking):
 
     return relatorio[colunas_existentes]
 
-
 # ---------------- STREAMLIT ----------------
-
 st.set_page_config(page_title="Validador de Checking", layout="centered") 
 st.title("Painel de Validação de Checking 🛠️")
 
 tab1, tab2 = st.tabs(["Validação Checking", "Validação Soudview"])
-
-with tab1:
-    st.info("Funcionalidade da Aba 1 a ser implementada.")
 
 with tab2:
     st.subheader("Validação da Soudview vs. Planilha Principal")
@@ -141,74 +125,50 @@ with tab2:
     campanha_selecionada = None
 
     if soud_file:
-        @st.cache_data
-        def carregar_e_extrair_campanhas(arquivo):
-            df = parse_soudview(pd.read_excel(arquivo, header=None, engine=None))
-            if df.empty:
-                return [], "Arquivo vazio"
-            df.columns = df.columns.str.strip().str.lower()
-            if 'comercial_soudview' not in df.columns:
-                return [], "Coluna 'comercial_soudview' não encontrada"
-            return sorted(df['comercial_soudview'].unique()), None
-
+        from soudview import parse_soudview
         soud_file.seek(0)
-        lista_de_campanhas, mensagem_erro = carregar_e_extrair_campanhas(soud_file)
-
-        if mensagem_erro:
-            st.warning(f"⚠️ {mensagem_erro}")
-        elif lista_de_campanhas:
-            opcoes_campanha = ["**TODAS AS CAMPANHAS**"] + lista_de_campanhas
-            campanha_selecionada = st.selectbox(
-                "Passo 3: Selecione a campanha para analisar",
-                options=opcoes_campanha
-            )
+        df_soud = parse_soudview(pd.read_excel(soud_file, header=None, engine=None))
+        df_soud.columns = df_soud.columns.str.strip().str.lower()
+        df_soud['veiculo_soudview'] = df_soud['veiculo_soudview'].apply(normalizar_nome)
+        campanhas = sorted(df_soud['comercial_soudview'].unique())
+        opcoes_campanha = ["**TODAS AS CAMPANHAS**"] + campanhas
+        campanha_selecionada = st.selectbox("Passo 3: Selecione a campanha para analisar", options=opcoes_campanha)
 
     if st.button("▶️ Iniciar Validação Soudview", use_container_width=True):
         if not checking_file or not soud_file:
-            st.warning("Por favor, faça o upload das duas planilhas: Checking e Soudview.")
-        elif not campanha_selecionada:
-            st.warning("Aguarde a análise das campanhas ou suba um arquivo válido.")
+            st.warning("Por favor, faça o upload das duas planilhas.")
         else:
-            with st.spinner("Analisando..."):
-                try:
-                    # Carrega Soudview
-                    soud_file.seek(0)
-                    df_soud = parse_soudview(pd.read_excel(soud_file, header=None, engine=None))
-                    df_soud.columns = df_soud.columns.str.strip().str.lower()
+            # Carregar Checking
+            if checking_file.name.endswith('.csv'):
+                df_checking = ler_csv(checking_file)
+            else:
+                df_checking = pd.read_excel(checking_file)
+            df_checking.columns = df_checking.columns.str.strip().str.lower()
 
-                    if campanha_selecionada == "**TODAS AS CAMPANHAS**":
-                        df_soud_filtrado = df_soud
-                    else:
-                        df_soud_filtrado = df_soud[df_soud['comercial_soudview'] == campanha_selecionada]
+            # Filtrar campanha
+            if campanha_selecionada == "**TODAS AS CAMPANHAS**":
+                df_soud_filtrado = df_soud
+            else:
+                df_soud_filtrado = df_soud[df_soud['comercial_soudview'] == campanha_selecionada]
 
-                    # Carrega Checking
-                    if checking_file.name.endswith('.csv'):
-                        df_checking = ler_csv(checking_file)
-                    else:
-                        df_checking = pd.read_excel(checking_file)
-                    df_checking.columns = df_checking.columns.str.strip().str.lower()
+            if df_soud_filtrado.empty:
+                st.error("Nenhuma veiculação encontrada para a campanha selecionada.")
+            else:
+                st.success(f"{len(df_soud_filtrado)} veiculações extraídas para a(s) campanha(s) selecionada(s)!")
+                relatorio_final = comparar_planilhas(df_soud_filtrado, df_checking)
 
-                    if df_soud_filtrado.empty:
-                        st.error("Nenhuma veiculação encontrada para a campanha selecionada.")
-                    else:
-                        st.success(f"{len(df_soud_filtrado)} veiculações extraídas para a(s) campanha(s) selecionada(s)!")
-                        relatorio_final = comparar_planilhas(df_soud_filtrado, df_checking)
-                        
-                        if not relatorio_final.empty:
-                            st.subheader("🎉 Relatório Final da Comparação")
-                            st.dataframe(relatorio_final)
+                if not relatorio_final.empty:
+                    st.subheader("🎉 Relatório Final da Comparação")
+                    st.dataframe(relatorio_final)
 
-                            # Download Excel
-                            output = io.BytesIO()
-                            with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-                                relatorio_final.to_excel(writer, index=False, sheet_name="Relatorio")
-                            st.download_button(
-                                "📥 Baixar Relatório Final",
-                                output.getvalue(),
-                                "Relatorio_Final.xlsx",
-                                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                use_container_width=True
-                            )
-                except Exception as e:
-                    st.error(f"Ocorreu um erro durante o processamento: {e}")
-                    st.exception(e)
+                    # Download Excel
+                    output = io.BytesIO()
+                    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+                        relatorio_final.to_excel(writer, index=False, sheet_name="Relatorio")
+                    st.download_button(
+                        "📥 Baixar Relatório Final",
+                        output.getvalue(),
+                        "Relatorio_Final.xlsx",
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True
+                    )
