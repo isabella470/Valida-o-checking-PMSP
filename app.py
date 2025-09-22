@@ -24,9 +24,9 @@ def ler_csv(file):
     file.seek(0)
     return pd.read_csv(file, sep=sep, encoding='utf-8')
 
-
+# --- CARREGAR DE/PARA FIXO ---
 @st.cache_data
-def carregar_depara(caminho="depara.csv"):
+def carregar_depara(caminho="depara.xlsx"):
     if caminho.endswith(".csv"):
         df = pd.read_csv(caminho)
     else:
@@ -35,24 +35,33 @@ def carregar_depara(caminho="depara.csv"):
     df['Veiculos Boxnet'] = df['Veiculos Boxnet'].str.strip()
     return df
 
-def mapear_veiculo(nome, df_depara, limite_confiança=80):
+df_depara = carregar_depara("depara.xlsx")
+
+# --- FUNÇÃO DE MAPEAMENTO ---
+def mapear_veiculo(nome, df_depara, veiculos_principais, limite_confiança=80):
     nome_norm = nome.lower().strip()
+
     # 1. Procura exata no de/para
     encontrado = df_depara[df_depara['Veiculo_Soudview'] == nome_norm]
     if not encontrado.empty:
         return encontrado['Veiculos Boxnet'].values[0], None, "✅ De/Para"
-    
-    # 2. Se não achar, fuzzy match
+
+    # 2. Fuzzy match no de/para
     candidatos = df_depara['Veiculo_Soudview'].tolist()
     melhor, score, _ = process.extractOne(nome_norm, candidatos, scorer=fuzz.token_sort_ratio)
     if score >= limite_confiança:
         veiculo_boxnet = df_depara[df_depara['Veiculo_Soudview'] == melhor]['Veiculos Boxnet'].values[0]
-        return veiculo_boxnet, score, "🤖 Fuzzy"
-    
+        return veiculo_boxnet, score, "🤖 Fuzzy De/Para"
+
+    # 3. Fuzzy match nos veículos principais (planilha checking)
+    melhor2, score2, _ = process.extractOne(nome_norm, veiculos_principais, scorer=fuzz.token_sort_ratio)
+    if score2 >= limite_confiança:
+        return melhor2, score2, "🤖 Fuzzy Checking"
+
     return "NÃO ENCONTRADO", None, "❌ Não encontrado"
 
-
-def comparar_planilhas(df_soud, df_checking, df_depara):
+# --- FUNÇÃO DE COMPARAÇÃO ---
+def comparar_planilhas(df_soud, df_checking):
     col_veiculo = 'VEÍCULO BOXNET'
     col_data = 'DATA VEICULAÇÃO'
     col_horario = 'HORA VEICULAÇÃO'
@@ -60,8 +69,11 @@ def comparar_planilhas(df_soud, df_checking, df_depara):
     # Normaliza os nomes da Soudview
     df_soud['Veiculo_Normalizado'] = df_soud['Veiculo_Soudview'].str.lower().str.strip()
 
+    # Lista de veículos principais da planilha checking
+    veiculos_principais = df_checking[col_veiculo].dropna().unique().tolist()
+
     # Aplica mapeamento
-    resultados = df_soud['Veiculo_Normalizado'].apply(lambda x: mapear_veiculo(x, df_depara))
+    resultados = df_soud['Veiculo_Soudview'].apply(lambda x: mapear_veiculo(x, df_depara, veiculos_principais))
     df_soud['Veiculo_Mapeado'] = [r[0] for r in resultados]
     df_soud['Score_Similaridade'] = [r[1] for r in resultados]
     df_soud['Tipo_Match'] = [r[2] for r in resultados]
@@ -90,9 +102,8 @@ def comparar_planilhas(df_soud, df_checking, df_depara):
         'Status', 'Veiculo_Principal_Encontrado'
     ]
     colunas_existentes = [col for col in colunas_finais if col in relatorio.columns]
-    
-    return relatorio[colunas_existentes]
 
+    return relatorio[colunas_existentes]
 
 # ---------------- STREAMLIT ----------------
 
@@ -109,7 +120,6 @@ with tab2:
     
     checking_file = st.file_uploader("Passo 1: Upload da Planilha Principal", type=["csv", "xlsx", "xls"])
     soud_file = st.file_uploader("Passo 2: Upload da Planilha Soudview", type=["xlsx", "xls"])
-    depara_file = st.file_uploader("Upload do De/Para (CSV ou XLSX)", type=["csv", "xlsx"])
 
     campanha_selecionada = None
 
@@ -132,21 +142,13 @@ with tab2:
             )
 
     if st.button("▶️ Iniciar Validação Soudview", use_container_width=True):
-        if not checking_file or not soud_file or not depara_file:
-            st.warning("Por favor, faça o upload das três planilhas: Checking, Soudview e De/Para.")
+        if not checking_file or not soud_file:
+            st.warning("Por favor, faça o upload das duas planilhas: Checking e Soudview.")
         elif not campanha_selecionada:
             st.warning("Aguarde a análise das campanhas ou suba um arquivo válido.")
         else:
             with st.spinner("Analisando..."):
                 try:
-                    # Carrega de/para
-                    if depara_file.name.endswith(".csv"):
-                        df_depara = pd.read_csv(depara_file)
-                    else:
-                        df_depara = pd.read_excel(depara_file)
-                    df_depara['Veiculo_Soudview'] = df_depara['Veiculo_Soudview'].str.lower().str.strip()
-                    df_depara['Veiculos Boxnet'] = df_depara['Veiculos Boxnet'].str.strip()
-
                     # Carrega Soudview
                     soud_file.seek(0)
                     df_soud = parse_soudview(pd.read_excel(soud_file, header=None, engine=None))
@@ -166,7 +168,7 @@ with tab2:
                         st.error("Nenhuma veiculação encontrada para a campanha selecionada.")
                     else:
                         st.success(f"{len(df_soud_filtrado)} veiculações extraídas para a(s) campanha(s) selecionada(s)!")
-                        relatorio_final = comparar_planilhas(df_soud_filtrado, df_checking, df_depara)
+                        relatorio_final = comparar_planilhas(df_soud_filtrado, df_checking)
                         
                         if not relatorio_final.empty:
                             st.subheader("🎉 Relatório Final da Comparação")
