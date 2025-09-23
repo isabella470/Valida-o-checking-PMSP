@@ -8,19 +8,60 @@ from unidecode import unidecode
 import re
 
 # ==============================================================================
-# 1. FUNÇÕES DE NORMALIZAÇÃO E LEITURA
+# 1. FUNÇÕES DE LIMPEZA AVANÇADA DE DADOS
 # ==============================================================================
 
-def normalizar_nome(nome):
-    if pd.isna(nome):
-        return ""
-    nome = str(nome).lower().strip()
-    nome = unidecode(nome)
-    nome = re.sub(r'[^a-z0-9 ]', '', nome)
-    nome = re.sub(r'\s+', ' ', nome)
+def pre_limpeza(nome):
+    """Padroniza abreviações e termos comuns ANTES da normalização principal."""
+    nome = str(nome).lower()
+    substituicoes = {
+        's.paulo': 'sao paulo',
+        'sp': 'sao paulo',
+        'rj': 'rio de janeiro',
+        'r.': 'radio',
+        # Adicione outras substituições que você identificar aqui
+    }
+    for antigo, novo in substituições.items():
+        # Usa \b para garantir que 'sp' não vire 'sao paulo' dentro de uma palavra
+        nome = re.sub(r'\b' + re.escape(antigo) + r'\b', novo, nome)
     return nome
 
+def remover_ruido(nome):
+    """Remove informações que mais atrapalham do que ajudam na comparação."""
+    # Remove números com pontos ou vírgulas (frequências de rádio, etc.)
+    nome = re.sub(r'\d+[\.,]\d+', '', nome)
+    
+    # Lista de palavras genéricas a serem removidas
+    palavras_ruido = ['ltda', 's/a', 'eireli', 'radio', 'tv', 'jornal', 'emissora', 'rede', 'fm', 'am']
+    
+    for palavra in palavras_ruido:
+        nome = re.sub(r'\b' + palavra + r'\b', '', nome)
+
+    # Remove espaços duplos que podem ter sido criados
+    return re.sub(r'\s+', ' ', nome).strip()
+
+def normalizar_nome_avancado(nome):
+    """Pipeline completo de limpeza e normalização de nomes."""
+    if pd.isna(nome):
+        return ""
+    
+    # Aplica as novas etapas de limpeza
+    nome_limpo = pre_limpeza(nome)
+    nome_limpo = remover_ruido(nome_limpo)
+    
+    # Aplica a normalização padrão
+    nome_final = unidecode(nome_limpo)
+    nome_final = re.sub(r'[^a-z0-9 ]', '', nome_final)
+    nome_final = re.sub(r'\s+', ' ', nome_final).strip()
+    
+    return nome_final
+
+# ==============================================================================
+# 2. FUNÇÕES DE LEITURA, MAPEAMENTO E COMPARAÇÃO
+# ==============================================================================
+
 def ler_csv(file):
+    """Lê um arquivo CSV, tentando detectar o separador."""
     file.seek(0)
     try:
         dialect = csv.Sniffer().sniff(file.read(1024).decode('utf-8'))
@@ -32,149 +73,160 @@ def ler_csv(file):
 
 @st.cache_data
 def carregar_depara(caminho="depara.csv"):
+    """Carrega e normaliza o arquivo De/Para."""
     try:
-        if caminho.endswith(".csv"):
-            df = pd.read_csv(caminho)
-        else:
-            df = pd.read_excel(caminho)
+        df = pd.read_csv(caminho)
         df.columns = df.columns.str.strip().str.lower()
-        df['veiculo_soudview'] = df['veiculo_soudview'].apply(normalizar_nome)
-        df['veiculos boxnet'] = df['veiculos boxnet'].apply(normalizar_nome)
+        # Usa a nova função de normalização avançada
+        df['veiculo_soudview'] = df['veiculo_soudview'].apply(normalizar_nome_avancado)
+        df['veiculos boxnet'] = df['veiculos boxnet'].apply(normalizar_nome_avancado)
         return df
-    except Exception as e:
-        st.error(f"Erro ao carregar De/Para: {e}")
+    except FileNotFoundError:
+        st.error(f"Erro: O arquivo de mapeamento '{caminho}' não foi encontrado.")
         return pd.DataFrame(columns=['veiculo_soudview', 'veiculos boxnet'])
 
-# ==============================================================================
-# 2. FUNÇÕES DE MAPEAMENTO E COMPARAÇÃO
-# ==============================================================================
-
-def mapear_veiculo(nome, df_depara, veiculos_principais, limite_confiança=85):
-    nome_norm = normalizar_nome(nome)
+def mapear_veiculo(nome, df_depara, veiculos_principais, limite_confianca):
+    """Função central de match, agora usando a normalização avançada."""
+    nome_norm = normalizar_nome_avancado(nome)
     if not nome_norm:
         return "NOME VAZIO", None, "⚪ Vazio"
 
+    # 1. Busca Exata no De/Para
     encontrado = df_depara[df_depara['veiculo_soudview'] == nome_norm]
     if not encontrado.empty:
         return encontrado['veiculos boxnet'].values[0], 100, "✅ De/Para"
 
-    candidatos = df_depara['veiculo_soudview'].tolist()
-    melhor, score, _ = process.extractOne(nome_norm, candidatos, scorer=fuzz.token_sort_ratio)
-    if score >= limite_confiança:
-        veiculo_boxnet = df_depara[df_depara['veiculo_soudview'] == melhor]['veiculos boxnet'].values[0]
-        return veiculo_boxnet, score, "🤖 Fuzzy De/Para"
-
-    veiculos_principais_norm = [normalizar_nome(v) for v in veiculos_principais]
-    melhor2, score2, _ = process.extractOne(nome_norm, veiculos_principais_norm, scorer=fuzz.token_sort_ratio)
-    if score2 >= limite_confiança:
-        return melhor2, score2, "🤖 Fuzzy Checking"
+    # 2. Fuzzy Match (Similaridade)
+    veiculos_principais_norm = [normalizar_nome_avancado(v) for v in veiculos_principais]
+    if veiculos_principais_norm:
+        melhor_checking, score_checking, _ = process.extractOne(nome_norm, veiculos_principais_norm, scorer=fuzz.WRatio)
+        if score_checking >= limite_confianca:
+            return melhor_checking, score_checking, "🤖 Fuzzy Checking"
 
     return "NÃO ENCONTRADO", None, "❌ Não encontrado"
 
-def comparar_planilhas(df_soud, df_checking, df_depara):
-    col_soud_veiculo_orig = 'veiculo_soudview'
-    col_soud_data = 'data'
-    col_soud_horario = 'horario'
-    col_check_veiculo = 'veículo boxnet'
-    col_check_data = 'data veiculação'
-    col_check_horario = 'hora veiculação'
-
-    df_soud[col_soud_veiculo_orig] = df_soud[col_soud_veiculo_orig].apply(normalizar_nome)
-    veiculos_principais = df_checking[col_check_veiculo].dropna().unique().tolist()
-    resultados = df_soud[col_soud_veiculo_orig].apply(
-        lambda x: mapear_veiculo(x, df_depara, veiculos_principais)
+def comparar_planilhas(df_soud, df_checking, df_depara, limite_confianca):
+    """Orquestra todo o processo de comparação."""
+    veiculos_principais = df_checking['veículo boxnet'].dropna().unique().tolist()
+    
+    resultados = df_soud['veiculo_soudview'].apply(
+        lambda x: mapear_veiculo(x, df_depara, veiculos_principais, limite_confianca)
     )
     df_soud['veiculo_mapeado'] = [r[0] for r in resultados]
     df_soud['score_similaridade'] = [r[1] for r in resultados]
     df_soud['tipo_match'] = [r[2] for r in resultados]
-
-    df_soud['data_merge'] = pd.to_datetime(df_soud[col_soud_data], errors='coerce').dt.strftime('%Y-%m-%d')
-    df_checking['data_merge'] = pd.to_datetime(df_checking[col_check_data], dayfirst=True, errors='coerce').dt.strftime('%Y-%m-%d')
-    df_soud['horario_merge'] = pd.to_datetime(df_soud[col_soud_horario], errors='coerce').dt.strftime('%H:%M')
-    df_checking['horario_merge'] = pd.to_datetime(df_checking[col_check_horario], errors='coerce').dt.strftime('%H:%M')
-
-    df_soud.fillna({'data_merge': '', 'horario_merge': ''}, inplace=True)
-    df_checking.fillna({'data_merge': '', 'horario_merge': ''}, inplace=True)
-    df_checking['veiculo_merge'] = df_checking[col_check_veiculo].apply(normalizar_nome)
-
-    relatorio = pd.merge(
-        df_soud,
-        df_checking,
-        left_on=['veiculo_mapeado', 'data_merge', 'horario_merge'],
-        right_on=['veiculo_merge', 'data_merge', 'horario_merge'],
-        how='left',
-        indicator=True
-    )
-
-    relatorio['status'] = np.where(relatorio['_merge'] == 'both', '✅ Encontrado no Checking', '❌ Não encontrado no Checking')
-    relatorio.rename(columns={col_check_veiculo: 'veiculo_checking_original'}, inplace=True)
-
-    colunas_finais = [
-        'veiculo_soudview', 'comercial_soudview', 'data', 'horario',
-        'veiculo_mapeado', 'score_similaridade', 'tipo_match', 'status'
-    ]
+    
+    # Preparação para o merge
+    df_soud_norm = df_soud.copy()
+    df_checking_norm = df_checking.copy()
+    
+    df_soud_norm['data_merge'] = pd.to_datetime(df_soud_norm['data'], errors='coerce').dt.strftime('%Y-%m-%d')
+    df_checking_norm['data_merge'] = pd.to_datetime(df_checking_norm['data veiculação'], dayfirst=True, errors='coerce').dt.strftime('%Y-%m-%d')
+    df_soud_norm['horario_merge'] = pd.to_datetime(df_soud_norm['horario'], errors='coerce').dt.strftime('%H:%M')
+    df_checking_norm['horario_merge'] = pd.to_datetime(df_checking_norm['hora veiculação'], errors='coerce').dt.strftime('%H:%M')
+    
+    df_soud_norm.fillna({'data_merge': '', 'horario_merge': ''}, inplace=True)
+    df_checking_norm.fillna({'data_merge': '', 'horario_merge': ''}, inplace=True)
+    
+    df_checking_norm['veiculo_merge'] = df_checking_norm['veículo boxnet'].apply(normalizar_nome_avancado)
+    
+    relatorio = pd.merge(df_soud_norm, df_checking_norm, left_on=['veiculo_mapeado', 'data_merge', 'horario_merge'], right_on=['veiculo_merge', 'data_merge', 'horario_merge'], how='left', indicator=True)
+    relatorio['status'] = np.where(relatorio['_merge'] == 'both', '✅ Encontrado', '❌ Não Encontrado')
+    
+    colunas_finais = ['veiculo_soudview', 'comercial_soudview', 'data', 'horario', 'veiculo_mapeado', 'score_similaridade', 'tipo_match', 'status']
     colunas_existentes = [col for col in colunas_finais if col in relatorio.columns]
-
+    
     return relatorio[colunas_existentes]
 
 # ==============================================================================
-# 3. INTERFACE STREAMLIT
+# 3. INTERFACE DO STREAMLIT
 # ==============================================================================
 
-st.set_page_config(page_title="Validador de Checking", layout="wide")
+st.set_page_config(page_title="Validador de Checking", layout="wide") 
 st.title("Painel de Validação de Checking 🛠️")
 
+# --- Barra Lateral com Controles ---
+st.sidebar.header("⚙️ Controles de Match")
+limite_confianca = st.sidebar.slider(
+    "Nível de Confiança para Similaridade (%)",
+    min_value=60, max_value=100, value=85, step=1,
+    help="Define o quão parecido um nome deve ser para dar 'match' automático. Se a pontuação for menor, será 'Não Encontrado'."
+)
+
+st.header("1. Carregue os Arquivos")
 df_depara = carregar_depara("depara.csv")
 
 col1, col2 = st.columns(2)
 with col1:
-    checking_file = st.file_uploader("Passo 1: Upload da Planilha Principal (Checking)", type=["csv", "xlsx", "xls"])
+    checking_file = st.file_uploader("Planilha Principal (Checking)", type=["csv", "xlsx", "xls"])
 with col2:
-    soud_file = st.file_uploader("Passo 2: Upload da Planilha Soudview", type=["csv", "xlsx", "xls"])
-
-campanha_selecionada = None
-df_soud = None
-
-if soud_file:
-    try:
-        if soud_file.name.endswith('.csv'):
-            df_soud = ler_csv(soud_file)
-        else:
-            df_soud = pd.read_excel(soud_file)
-        df_soud.columns = df_soud.columns.str.strip().str.lower()
-
-        colunas_esperadas = ['veiculo_soudview', 'comercial_soudview', 'data', 'horario']
-        faltando = [col for col in colunas_esperadas if col not in df_soud.columns]
-        if faltando:
-            st.error(f"A planilha Soudview está faltando as colunas: {', '.join(faltando)}")
-            df_soud = None
-        else:
-            campanhas = sorted(df_soud['comercial_soudview'].dropna().unique())
-            opcoes_campanha = ["**TODAS AS CAMPANHAS**"] + campanhas
-            campanha_selecionada = st.selectbox("Passo 3: Selecione a campanha para analisar", options=opcoes_campanha)
-    except Exception as e:
-        st.error(f"Erro ao processar Soudview: {e}")
+    soud_file = st.file_uploader("Planilha Soudview", type=["xlsx", "xls"])
 
 if st.button("▶️ Iniciar Validação", use_container_width=True, type="primary"):
-    if not checking_file or not soud_file:
-        st.warning("Por favor, faça o upload das duas planilhas.")
-    elif df_soud is None or df_depara.empty:
-        st.error("Erro ao carregar os dados.")
+    if not checking_file or not soud_file or df_depara.empty:
+        st.warning("Por favor, carregue a Planilha Principal, a Planilha Soudview e verifique se o arquivo 'depara.csv' existe.")
     else:
-        with st.spinner("Analisando dados..."):
-            try:
-                if checking_file.name.endswith('.csv'):
-                    df_checking = ler_csv(checking_file)
-                else:
-                    df_checking = pd.read_excel(checking_file)
-                df_checking.columns = df_checking.columns.str.strip().str.lower()
+        try:
+            from soudview import parse_soudview
+            soud_file.seek(0)
+            df_soud = parse_soudview(pd.read_excel(soud_file, header=None))
+            df_soud.columns = df_soud.columns.str.strip().str.lower()
 
-                if campanha_selecionada and campanha_selecionada != "**TODAS AS CAMPANHAS**":
-                    df_soud_filtrado = df_soud[df_soud['comercial_soudview'] == campanha_selecionada].copy()
-                else:
-                    df_soud_filtrado = df_soud.copy()
+            if checking_file.name.endswith('.csv'):
+                df_checking = ler_csv(checking_file)
+            else:
+                df_checking = pd.read_excel(checking_file)
+            df_checking.columns = df_checking.columns.str.strip().str.lower()
+            
+            with st.spinner("Analisando... A nova limpeza avançada pode levar um pouco mais de tempo."):
+                relatorio_final = comparar_planilhas(df_soud, df_checking, df_depara, limite_confianca)
 
-                if df_soud_filtrado.empty:
-                    st.error("Nenhuma veiculação encontrada.")
-                else:
-                    relatorio_final = comparar_planilhas(df_soud_fil
+            st.header("2. Relatório da Comparação")
+            st.dataframe(relatorio_final)
+
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+                relatorio_final.to_excel(writer, index=False, sheet_name="Relatorio")
+            st.download_button("📥 Baixar Relatório Final", output.getvalue(), "Relatorio_Final.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+
+            # --- Ferramenta de Diagnóstico ---
+            nao_encontrados = relatorio_final[relatorio_final['status'] == '❌ Não Encontrado']
+            if not nao_encontrados.empty:
+                st.header("3. Diagnóstico de Itens Não Encontrados ('Raio-X')")
+                st.warning("Use esta análise para encontrar os problemas e melhorar seu arquivo `depara.csv`.")
+                
+                veiculos_falharam = nao_encontrados['veiculo_soudview'].unique()
+                veiculos_checking = df_checking['veículo boxnet'].dropna().unique()
+                
+                # Criamos um dicionário para busca rápida: {nome_normalizado: nome_original}
+                veiculos_checking_norm_map = {normalizar_nome_avancado(v): v for v in veiculos_checking}
+
+                for veiculo in veiculos_falharam:
+                    with st.expander(f"🔍 Análise para: **{veiculo}**"):
+                        nome_normalizado = normalizar_nome_avancado(veiculo)
+                        st.write(f"Nome após limpeza avançada: `{nome_normalizado}`")
+                        st.write("Abaixo estão os 5 candidatos mais próximos da sua Planilha Principal (Checking):")
+                        
+                        candidatos = process.extract(
+                            nome_normalizado, 
+                            veiculos_checking_norm_map.keys(), 
+                            scorer=fuzz.WRatio, 
+                            limit=5
+                        )
+                        
+                        if candidatos:
+                            nomes_originais = [veiculos_checking_norm_map[c[0]] for c in candidatos]
+                            scores = [round(c[1], 2) for c in candidatos]
+                            df_candidatos = pd.DataFrame({
+                                "Candidato na Planilha Principal": nomes_originais,
+                                "Pontuação de Similaridade (%)": scores
+                            })
+                            st.dataframe(df_candidatos, use_container_width=True)
+                            st.info(f"**Ação recomendada:** Se um dos candidatos (ex: '{nomes_originais[0]}') estiver correto, adicione uma linha no seu `depara.csv` com '{veiculo}' na primeira coluna e '{nomes_originais[0]}' na segunda.")
+                        else:
+                            st.write("Nenhum candidato razoável encontrado.")
+
+        except ImportError:
+            st.error("Erro Crítico: Não foi possível encontrar a função `parse_soudview`. Verifique se o arquivo `soudview.py` está na mesma pasta do seu app.")
+        except Exception as e:
+            st.error(f"Ocorreu um erro inesperado durante a execução: {e}")
