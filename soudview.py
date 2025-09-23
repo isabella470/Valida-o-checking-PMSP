@@ -1,51 +1,79 @@
+# Conteúdo para o arquivo: soudview.py (Versão com Log Detalhado)
+
 import pandas as pd
 import re
 
-def parse_soudview(df_bruto: pd.DataFrame) -> pd.DataFrame:
+def parse_soudview(df_bruto: pd.DataFrame):
     """
-    Parser flexível para planilha da Soudview.
-    Retorna: veiculo_soudview | comercial_soudview | data | horario
+    Parser inteligente com log de diagnóstico para entender o processo de extração.
+    Retorna um DataFrame de resultados e uma lista de mensagens de log.
     """
+    log = []
+    log.append("--- Iniciando o parser da Soudview ---\n")
+    
+    # Remove linhas e colunas completamente vazias para limpar o input
+    df = df_bruto.dropna(how="all").dropna(how="all", axis=1).reset_index(drop=True)
+    log.append(f"DataFrame limpo. Formato inicial: {df.shape[0]} linhas, {df.shape[1]} colunas.\n")
 
-    # Remove linhas/colunas completamente vazias
-    df = df_bruto.dropna(how="all").copy()
-    df = df.reset_index(drop=True)
+    veiculo_atual = "Veículo não identificado"
+    comercial_atual = "Comercial não identificado"
+    resultados = []
 
-    # Normaliza cabeçalhos em string minúscula
-    df.columns = [str(c).strip().lower() for c in df.columns]
+    for i, row in df.iterrows():
+        # Pega a primeira célula da linha, que geralmente contém a informação principal
+        # Se a linha for vazia ou a primeira célula for nula, pula para a próxima
+        if row.empty or pd.isna(row.iloc[0]):
+            continue
+            
+        primeira_celula = str(row.iloc[0]).strip()
+        log.append(f"Linha {i}: Analisando célula 'A' -> '{primeira_celula}'\n")
 
-    # Tentativa de detectar colunas por regex
-    colunas = {
-        "veiculo_soudview": None,
-        "comercial_soudview": None,
-        "data": None,
-        "horario": None,
-    }
+        # Tenta detectar se a linha é um cabeçalho de veículo
+        if any(re.search(r"\b(FM|AM|TV|RÁDIO|RADIO|REDE)\b", str(cell).upper()) for cell in row):
+            if len(re.findall(r'[a-zA-Z]', primeira_celula)) > 3: # Garante que não é só um "TV" perdido
+                veiculo_atual = primeira_celula
+                log.append(f"  -> DETECTADO como VEÍCULO. Novo contexto de veículo: '{veiculo_atual}'\n")
+                continue
 
-    for col in df.columns:
-        if re.search(r"ve[ií]culo|emissora|station", col):
-            colunas["veiculo_soudview"] = col
-        elif re.search(r"comercial|programa|spot|anúncio|anuncio", col):
-            colunas["comercial_soudview"] = col
-        elif re.search(r"data", col):
-            colunas["data"] = col
-        elif re.search(r"hora|horário|time", col):
-            colunas["horario"] = col
+        # Tenta detectar se a linha é um cabeçalho de comercial
+        if any(re.search(r"(SPOT|COMERCIAL|ANÚNCIO|ANUNCIO)", str(cell), re.I) for cell in row):
+            comercial_atual = primeira_celula
+            log.append(f"  -> DETECTADO como COMERCIAL. Novo contexto de comercial: '{comercial_atual}'\n")
+            continue
 
-    # Cria dataframe só com colunas válidas
-    df_out = pd.DataFrame()
-    for novo, original in colunas.items():
-        if original in df.columns:
-            df_out[novo] = df[original]
-        else:
-            df_out[novo] = None  # coluna ausente → preenche vazio
+        # Tenta detectar se a primeira célula da linha é uma data
+        if re.match(r"^\d{1,2}/\d{1,2}(/\d{2,4})?$", primeira_celula):
+            log.append(f"  -> DETECTADO como linha de DADOS. Processando horários...\n")
+            data_str = primeira_celula
+            horarios_encontrados = 0
+            # Itera por todas as outras células da linha para encontrar os horários
+            for horario in row[1:]:
+                if pd.notna(horario) and str(horario).strip() != '':
+                    try:
+                        data_dt = pd.to_datetime(data_str, dayfirst=True, errors='coerce')
+                        if isinstance(horario, (float, int)):
+                            total_seconds = int(horario * 24 * 60 * 60)
+                            minutes, seconds = divmod(total_seconds, 60)
+                            hours, minutes = divmod(minutes, 60)
+                            hora_obj = pd.to_datetime(f"{hours}:{minutes}:{seconds}", format='%H:%M:%S').time()
+                        else:
+                            hora_obj = pd.to_datetime(str(horario), errors='coerce').time()
 
-    # Normaliza data
-    if "data" in df_out.columns:
-        df_out["data"] = pd.to_datetime(df_out["data"], errors="coerce").dt.strftime("%Y-%m-%d")
+                        if pd.notna(data_dt) and pd.notna(hora_obj):
+                            resultados.append({
+                                "veiculo_soudview": veiculo_atual,
+                                "comercial_soudview": comercial_atual,
+                                "data": data_dt.strftime("%Y-%m-%d"),
+                                "horario": hora_obj.strftime("%H:%M:%S")
+                            })
+                            horarios_encontrados += 1
+                    except (ValueError, TypeError):
+                        continue
+            log.append(f"    -> {horarios_encontrados} horários válidos encontrados e adicionados.\n")
+            continue # Pula para a próxima linha após processar os horários
+        
+        # Se a linha não se encaixou em nenhuma regra, registra isso
+        log.append("  -> Linha não correspondeu a nenhum padrão (veículo, comercial ou data). Ignorando.\n")
 
-    # Normaliza horário
-    if "horario" in df_out.columns:
-        df_out["horario"] = pd.to_datetime(df_out["horario"], errors="coerce").dt.strftime("%H:%M")
-
-    return df_out
+    log.append(f"\n--- Fim do parser. Total de {len(resultados)} registros encontrados. ---\n")
+    return pd.DataFrame(resultados), log
