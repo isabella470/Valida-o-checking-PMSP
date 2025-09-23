@@ -48,42 +48,33 @@ def ler_csv(file):
     file.seek(0)
     return pd.read_csv(file, sep=sep, encoding='utf-8')
 
-@st.cache_data
-def carregar_depara(caminho="depara.csv"):
-    try:
-        df = pd.read_csv(caminho)
-        df.columns = df.columns.str.strip().str.lower()
-        df['veiculo_soudview'] = df['veiculo_soudview'].apply(normalizar_nome_avancado)
-        # <<< ALTERAÇÃO AQUI >>>
-        df['emissora'] = df['emissora'].apply(normalizar_nome_avancado)
-        return df
-    except FileNotFoundError:
-        st.error(f"Erro: O arquivo de mapeamento '{caminho}' não foi encontrado.")
-        return pd.DataFrame(columns=['veiculo_soudview', 'emissora'])
-    except KeyError:
-        st.error(f"Erro no '{caminho}': Verifique se os cabeçalhos das colunas são 'veiculo_soudview' e 'emissora'.")
-        return pd.DataFrame(columns=['veiculo_soudview', 'emissora'])
-
-
-def mapear_veiculo(nome, df_depara, veiculos_principais, limite_confianca):
+# <<< FUNÇÃO mapear_veiculo SIMPLIFICADA >>>
+def mapear_veiculo(nome, veiculos_principais, limite_confianca):
+    """Função de match que opera apenas por similaridade."""
     nome_norm = normalizar_nome_avancado(nome)
-    if not nome_norm: return "NOME VAZIO", None, "⚪ Vazio"
-    encontrado = df_depara[df_depara['veiculo_soudview'] == nome_norm]
-    if not encontrado.empty:
-        # <<< ALTERAÇÃO AQUI >>>
-        return encontrado['emissora'].values[0], 100, "✅ De/Para"
+    if not nome_norm:
+        return "NOME VAZIO", None, "⚪ Vazio"
+
     veiculos_principais_norm = [normalizar_nome_avancado(v) for v in veiculos_principais]
+    
     if veiculos_principais_norm:
-        melhor_checking, score_checking, _ = process.extractOne(nome_norm, veiculos_principais_norm, scorer=fuzz.WRatio)
-        if score_checking >= limite_confianca:
-            return melhor_checking, score_checking, "🤖 Fuzzy Checking"
+        # Busca pelo nome mais similar na lista da planilha principal
+        melhor_match, score, _ = process.extractOne(nome_norm, veiculos_principais_norm, scorer=fuzz.WRatio)
+        
+        if score >= limite_confianca:
+            return melhor_match, score, "🤖 Fuzzy Match"
+
     return "NÃO ENCONTRADO", None, "❌ Não encontrado"
 
-def comparar_planilhas(df_soud, df_checking, df_depara, limite_confianca):
-    # <<< ALTERAÇÃO AQUI >>>
+
+# <<< FUNÇÃO comparar_planilhas ATUALIZADA >>>
+def comparar_planilhas(df_soud, df_checking, limite_confianca):
+    """Orquestra todo o processo de comparação sem usar De/Para."""
     veiculos_principais = df_checking['emissora'].dropna().unique().tolist()
     
-    resultados = df_soud['veiculo_soudview'].apply(lambda x: mapear_veiculo(x, df_depara, veiculos_principais, limite_confianca))
+    resultados = df_soud['veiculo_soudview'].apply(
+        lambda x: mapear_veiculo(x, veiculos_principais, limite_confianca)
+    )
     df_soud['veiculo_mapeado'] = [r[0] for r in resultados]
     df_soud['score_similaridade'] = [r[1] for r in resultados]
     df_soud['tipo_match'] = [r[2] for r in resultados]
@@ -99,7 +90,6 @@ def comparar_planilhas(df_soud, df_checking, df_depara, limite_confianca):
     df_soud_norm.fillna({'data_merge': '', 'horario_merge': ''}, inplace=True)
     df_checking_norm.fillna({'data_merge': '', 'horario_merge': ''}, inplace=True)
     
-    # <<< ALTERAÇÃO AQUI >>>
     df_checking_norm['veiculo_merge'] = df_checking_norm['emissora'].apply(normalizar_nome_avancado)
     
     relatorio = pd.merge(df_soud_norm, df_checking_norm, left_on=['veiculo_mapeado', 'data_merge', 'horario_merge'], right_on=['veiculo_merge', 'data_merge', 'horario_merge'], how='left', indicator=True)
@@ -121,11 +111,11 @@ st.sidebar.header("⚙️ Controles de Match")
 limite_confianca = st.sidebar.slider(
     "Nível de Confiança para Similaridade (%)",
     min_value=60, max_value=100, value=85, step=1,
-    help="Define o quão parecido um nome deve ser para dar 'match' automático."
+    help="Define o quão parecido um nome deve ser para dar 'match' automático. Ajuste este valor para ser mais ou menos restrito."
 )
 
 st.header("1. Carregue os Arquivos")
-df_depara = carregar_depara("depara.csv")
+# <<< REMOVIDO: Carregamento do 'depara.csv' não é mais necessário >>>
 
 col1, col2 = st.columns(2)
 with col1:
@@ -134,8 +124,9 @@ with col2:
     soud_file = st.file_uploader("Planilha Soudview", type=["csv", "xlsx", "xls"])
 
 if st.button("▶️ Iniciar Validação", use_container_width=True, type="primary"):
-    if not checking_file or not soud_file or (df_depara is not None and df_depara.empty):
-        st.warning("Por favor, carregue a Planilha Principal, a Planilha Soudview e verifique se o arquivo 'depara.csv' existe.")
+    # <<< ALTERADO: Checagem simplificada sem o 'depara' >>>
+    if not checking_file or not soud_file:
+        st.warning("Por favor, carregue a Planilha Principal e a Planilha Soudview.")
     else:
         try:
             from soudview import parse_soudview
@@ -153,8 +144,9 @@ if st.button("▶️ Iniciar Validação", use_container_width=True, type="prima
                 df_checking = pd.read_excel(checking_file)
             df_checking.columns = df_checking.columns.str.strip().str.lower()
             
-            with st.spinner("Analisando..."):
-                relatorio_final = comparar_planilhas(df_soud, df_checking, df_depara, limite_confianca)
+            with st.spinner("Analisando por similaridade..."):
+                # <<< ALTERADO: Chamada da função sem o 'depara' >>>
+                relatorio_final = comparar_planilhas(df_soud, df_checking, limite_confianca)
 
             st.header("2. Relatório da Comparação")
             st.dataframe(relatorio_final)
@@ -164,13 +156,13 @@ if st.button("▶️ Iniciar Validação", use_container_width=True, type="prima
                 relatorio_final.to_excel(writer, index=False, sheet_name="Relatorio")
             st.download_button("📥 Baixar Relatório Final", output.getvalue(), "Relatorio_Final.xlsx", use_container_width=True)
 
+            # A ferramenta de diagnóstico continua útil para entender as pontuações
             nao_encontrados = relatorio_final[relatorio_final['status'] == '❌ Não Encontrado']
             if not nao_encontrados.empty:
                 st.header("3. Diagnóstico de Itens Não Encontrados ('Raio-X')")
-                st.warning("Use esta análise para melhorar seu arquivo `depara.csv`.")
+                st.warning("Itens com pontuação de similaridade abaixo do seu nível de confiança aparecerão aqui.")
                 
                 veiculos_falharam = nao_encontrados['veiculo_soudview'].unique()
-                # <<< ALTERAÇÃO AQUI >>>
                 veiculos_checking = df_checking['emissora'].dropna().unique()
                 veiculos_checking_norm_map = {normalizar_nome_avancado(v): v for v in veiculos_checking}
 
@@ -187,13 +179,13 @@ if st.button("▶️ Iniciar Validação", use_container_width=True, type="prima
                             scores = [round(c[1], 2) for c in candidatos]
                             df_candidatos = pd.DataFrame({"Candidato na Planilha Principal": nomes_originais, "Pontuação de Similaridade (%)": scores})
                             st.dataframe(df_candidatos, use_container_width=True)
-                            st.info(f"**Ação recomendada:** Se um dos candidatos (ex: '{nomes_originais[0]}') estiver correto, adicione uma linha no seu `depara.csv` com '{veiculo}' na primeira coluna e '{nomes_originais[0]}' na segunda.")
+                            st.info(f"**Análise:** O melhor candidato ('{nomes_originais[0]}') teve uma pontuação de {scores[0]}%. Se este valor for menor que o seu Nível de Confiança ({limite_confianca}%), o match não é feito. Considere diminuir o nível de confiança se o match for correto.")
                         else:
                             st.write("Nenhum candidato razoável encontrado.")
 
         except ImportError:
             st.error("Erro Crítico: Não foi possível encontrar a função `parse_soudview`. Verifique se o arquivo `soudview.py` está na mesma pasta do seu app.")
         except KeyError as e:
-            st.error(f"Erro de Coluna: A coluna {e} não foi encontrada em uma das planilhas. Verifique se os nomes dos cabeçalhos estão corretos.")
+            st.error(f"Erro de Coluna: A coluna {e} não foi encontrada em uma das planilhas. Verifique se os nomes dos cabeçalhos estão corretos (ex: 'emissora', 'data veiculação', etc.).")
         except Exception as e:
             st.error(f"Ocorreu um erro inesperado durante a execução: {e}")
