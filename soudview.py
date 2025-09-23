@@ -1,55 +1,61 @@
 import pandas as pd
 
-def parse_soudview(df_raw):
+def parse_soudview(df_bruto):
     """
-    Parser da planilha Soudview exportada como CSV ou Excel.
-
-    Regras:
-    - O nome do veículo aparece em uma das colunas da direita (coluna 9, se existir).
-      Mantém o último valor até que mude.
-    - O comercial aparece em linhas com "Comercial:".
-    - Datas ficam na primeira coluna (coluna 0).
-    - Horários ficam normalmente na coluna 2 (podendo haver vários horários na mesma célula).
+    Esta função recebe um DataFrame 'bruto' (lido diretamente do Excel sem cabeçalho)
+    e o transforma em um DataFrame organizado com colunas padronizadas.
+    
+    VOCÊ PRECISA ADAPTAR ESTA FUNÇÃO PARA O SEU ARQUIVO ESPECÍFICO.
     """
+    
+    # --------------------------------------------------------------------------
+    # PASSO 1: EXTRAIR O NOME DA CAMPANHA (SE NECESSÁRIO)
+    # --------------------------------------------------------------------------
+    # Muitas vezes, o nome da campanha/comercial fica numa célula específica,
+    # por exemplo, na primeira linha (índice 0) e primeira coluna (índice 0).
+    # Adapte os números de [linha, coluna] conforme sua planilha.
+    try:
+        # Exemplo: Pega o valor da célula A1
+        nome_comercial = df_bruto.iloc[0, 0] 
+    except IndexError:
+        nome_comercial = "Campanha Padrão"
 
-    dados_finais = []
-    veiculo_atual = None
-    comercial_atual = None
+    # --------------------------------------------------------------------------
+    # PASSO 2: ENCONTRAR ONDE OS DADOS REALMENTE COMEÇAM
+    # --------------------------------------------------------------------------
+    # Pule as linhas de cabeçalho ou em branco até encontrar a primeira linha de dados.
+    # Exemplo: Supondo que os dados comecem na linha 5 (índice 4).
+    df_dados = df_bruto.iloc[4:].copy()
 
-    for _, row in df_raw.iterrows():
-        # Primeira coluna: data ou "Comercial:"
-        primeira_col = str(row.iloc[0]) if pd.notna(row.iloc[0]) else ""
-        veiculo_col = str(row.iloc[9]) if row.shape[0] > 9 and pd.notna(row.iloc[9]) else None
+    # --------------------------------------------------------------------------
+    # PASSO 3: CRIAR O DATAFRAME ORGANIZADO
+    # --------------------------------------------------------------------------
+    # Crie um novo DataFrame pegando as colunas corretas do df_dados.
+    # **ESTA É A PARTE MAIS IMPORTANTE PARA ADAPTAR.**
+    
+    # Suponha que no seu Excel:
+    # - Coluna A (índice 0) tem o nome do veículo.
+    # - Coluna C (índice 2) tem a data da veiculação.
+    # - Coluna D (índice 3) tem a hora da veiculação.
+    
+    df_final = pd.DataFrame({
+        # Adiciona o nome do comercial que extraímos em todas as linhas
+        'comercial_soudview': nome_comercial,
+        
+        # Pega a primeira coluna do Excel (df_dados.iloc[:, 0]) e a nomeia como 'veiculo_soudview'
+        'veiculo_soudview': df_dados.iloc[:, 0],
+        
+        # Pega a terceira coluna (df_dados.iloc[:, 2]) e a nomeia como 'data'
+        'data': df_dados.iloc[:, 2],
+        
+        # Pega a quarta coluna (df_dados.iloc[:, 3]) e a nomeia como 'horario'
+        'horario': df_dados.iloc[:, 3]
+    })
 
-        # Atualiza veículo se mudar
-        if veiculo_col and "Veículo" in veiculo_col:
-            veiculo_atual = veiculo_col.replace("Veículo:", "").strip()
+    # --------------------------------------------------------------------------
+    # PASSO 4: LIMPEZA FINAL
+    # --------------------------------------------------------------------------
+    # Remove linhas que possam estar completamente vazias
+    df_final.dropna(how='all', subset=['veiculo_soudview', 'data', 'horario'], inplace=True)
 
-        # Atualiza comercial se mudar
-        if "Comercial:" in primeira_col:
-            comercial_atual = primeira_col.replace("Comercial:", "").strip()
-            continue
-
-        # Tenta ler data (primeira coluna)
-        try:
-            data = pd.to_datetime(primeira_col, dayfirst=True, errors="raise").date()
-        except Exception:
-            continue
-
-        # Extrai horários da coluna 2 (pode haver vários)
-        if row.shape[0] > 2 and pd.notna(row.iloc[2]):
-            horarios_brutos = str(row.iloc[2]).split()
-            for h in horarios_brutos:
-                try:
-                    horario = pd.to_datetime(h, errors="coerce").time()
-                    if horario:
-                        dados_finais.append({
-                            "Veiculo_Soudview": veiculo_atual,
-                            "Comercial_Soudview": comercial_atual,
-                            "Data": data,
-                            "Horario": horario
-                        })
-                except Exception:
-                    continue
-
-    return pd.DataFrame(dados_finais)
+    return df_final
