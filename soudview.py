@@ -2,69 +2,35 @@ import pandas as pd
 
 def parse_soudview(df_bruto):
     """
-    Esta função recebe o DataFrame bruto e o transforma em um formato organizado.
-    Siga os comentários para adaptar esta lógica ao seu arquivo.
+    Função personalizada para extrair dados da planilha Soudview enviada.
     """
-    
-    # --- DEBUG: Imprime as 10 primeiras linhas do arquivo bruto no terminal ---
-    # Isso ajuda você a ver os números das linhas e colunas.
-    print("--- Amostra do Arquivo Bruto (soudview.py) ---")
-    print(df_bruto.head(10))
-    print("-------------------------------------------------")
-    
     try:
-        # ======================================================================
-        # ADAPTE AS VARIÁVEIS ABAIXO
-        # ======================================================================
+        # 1. Extrai o nome do comercial/campanha. No seu arquivo, ele está na célula C4 (linha 3, coluna 2).
+        nome_comercial = df_bruto.iloc[3, 2]
 
-        # 1. Em qual LINHA os seus dados (a lista de veiculações) começam?
-        #    Lembre-se que a contagem começa em 0 (Linha 1 = 0, Linha 2 = 1, etc.)
-        #    Exemplo: Se seus dados começam na sexta linha do Excel, use 5.
-        LINHA_INICIAL_DADOS = 5 
+        # 2. Define que os dados da tabela começam na linha 7 (índice 6).
+        df_dados = df_bruto.iloc[6:].copy()
 
-        # 2. Em qual COLUNA está cada informação?
-        #    (Coluna A = 0, Coluna B = 1, Coluna C = 2, etc.)
-        COLUNA_VEICULO = 0  # Exemplo: Veículo na Coluna A
-        COLUNA_DATA = 2     # Exemplo: Data na Coluna C
-        COLUNA_HORARIO = 3  # Exemplo: Horário na Coluna D
+        # 3. Define os nomes corretos para as colunas da tabela, conforme o layout.
+        df_dados.columns = [
+            'veiculo_soudview', 'programa', 'formato', 'titulo', 'duracao', 
+            'versao', 'genero', 'data', 'horario'
+        ]
+
+        # 4. Adiciona a coluna com o nome do comercial.
+        df_dados['comercial_soudview'] = nome_comercial
         
-        # 3. (Opcional) Onde está o nome do COMERCIAL/CAMPANHA?
-        #    Muitas vezes fica em uma única célula no topo do arquivo.
-        #    Exemplo: Linha 2 (índice 1), Coluna B (índice 1)
-        LINHA_COMERCIAL = 1
-        COLUNA_COMERCIAL = 1
-        nome_comercial = df_bruto.iloc[LINHA_COMERCIAL, COLUNA_COMERCIAL]
-
-        # ======================================================================
-        # A LÓGICA ABAIXO USA AS VARIÁVEIS QUE VOCÊ DEFINIU
-        # ======================================================================
+        # 5. Remove linhas que possam estar completamente vazias.
+        df_dados.dropna(subset=['veiculo_soudview', 'data', 'horario'], how='all', inplace=True)
         
-        # Pula as linhas de cabeçalho
-        df_dados = df_bruto.iloc[LINHA_INICIAL_DADOS:].copy()
-
-        # Cria o DataFrame final com base nos números das colunas
-        df_final = pd.DataFrame({
-            'comercial_soudview': nome_comercial,
-            'veiculo_soudview': df_dados.iloc[:, COLUNA_VEICULO],
-            'data': df_dados.iloc[:, COLUNA_DATA],
-            'horario': df_dados.iloc[:, COLUNA_HORARIO]
-        })
-
-        # Limpa linhas que ficaram totalmente vazias
-        df_final.dropna(how='all', subset=['veiculo_soudview', 'data', 'horario'], inplace=True)
+        # 6. Seleciona e retorna apenas as colunas que o app principal precisa.
+        colunas_necessarias = ['comercial_soudview', 'veiculo_soudview', 'data', 'horario']
         
-        # --- DEBUG: Imprime o resultado final no terminal ---
-        print(f"--- Resultado do Parse (soudview.py): {len(df_final)} linhas extraídas ---")
-        print(df_final.head())
-        print("-------------------------------------------------")
+        return df_dados[colunas_necessarias]
 
-        return df_final
-
-    except (IndexError, KeyError) as e:
-        # Se os números de linha/coluna estiverem errados, um erro acontecerá.
-        # Esta mensagem ajudará a identificar o problema.
-        print(f"!!! ERRO em soudview.py: Não foi possível encontrar a linha/coluna especificada. Verifique suas variáveis. Erro: {e}")
-        # Retorna um DataFrame vazio em caso de erro para não quebrar o app principal.
+    except Exception as e:
+        print(f"!!! ERRO em soudview.py: {e}")
+        # Retorna um DataFrame vazio em caso de erro.
         return pd.DataFrame({
             'comercial_soudview': [], 'veiculo_soudview': [], 'data': [], 'horario': []
         })
