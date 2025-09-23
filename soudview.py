@@ -1,37 +1,51 @@
 import pandas as pd
+import re
 
 def parse_soudview(df_bruto: pd.DataFrame) -> pd.DataFrame:
     """
-    Converte o dataframe bruto da planilha Soudview em um dataframe padronizado.
-    Esperado: colunas -> veiculo_soudview, comercial_soudview, data, horario
+    Parser flexível para planilha da Soudview.
+    Retorna: veiculo_soudview | comercial_soudview | data | horario
     """
 
-    # Tenta detectar cabeçalhos automaticamente
-    df = df_bruto.copy()
-    df = df.dropna(how="all")  # remove linhas totalmente vazias
+    # Remove linhas/colunas completamente vazias
+    df = df_bruto.dropna(how="all").copy()
     df = df.reset_index(drop=True)
 
-    # Ajuste: supondo que as colunas da Soudview venham assim (mude se for diferente):
-    # [0] Veículo | [1] Programa/Comercial | [2] Data | [3] Hora
-    col_map = {
-        0: "veiculo_soudview",
-        1: "comercial_soudview",
-        2: "data",
-        3: "horario"
+    # Normaliza cabeçalhos em string minúscula
+    df.columns = [str(c).strip().lower() for c in df.columns]
+
+    # Tentativa de detectar colunas por regex
+    colunas = {
+        "veiculo_soudview": None,
+        "comercial_soudview": None,
+        "data": None,
+        "horario": None,
     }
 
-    # Renomeia apenas as primeiras 4 colunas
-    df = df.rename(columns=col_map)
+    for col in df.columns:
+        if re.search(r"ve[ií]culo|emissora|station", col):
+            colunas["veiculo_soudview"] = col
+        elif re.search(r"comercial|programa|spot|anúncio|anuncio", col):
+            colunas["comercial_soudview"] = col
+        elif re.search(r"data", col):
+            colunas["data"] = col
+        elif re.search(r"hora|horário|time", col):
+            colunas["horario"] = col
 
-    # Pega só as colunas de interesse
-    colunas_finais = ["veiculo_soudview", "comercial_soudview", "data", "horario"]
-    df = df[[c for c in colunas_finais if c in df.columns]]
+    # Cria dataframe só com colunas válidas
+    df_out = pd.DataFrame()
+    for novo, original in colunas.items():
+        if original in df.columns:
+            df_out[novo] = df[original]
+        else:
+            df_out[novo] = None  # coluna ausente → preenche vazio
 
-    # Normaliza data e hora
-    if "data" in df.columns:
-        df["data"] = pd.to_datetime(df["data"], errors="coerce").dt.date
+    # Normaliza data
+    if "data" in df_out.columns:
+        df_out["data"] = pd.to_datetime(df_out["data"], errors="coerce").dt.strftime("%Y-%m-%d")
 
-    if "horario" in df.columns:
-        df["horario"] = pd.to_datetime(df["horario"], errors="coerce").dt.strftime("%H:%M")
+    # Normaliza horário
+    if "horario" in df_out.columns:
+        df_out["horario"] = pd.to_datetime(df_out["horario"], errors="coerce").dt.strftime("%H:%M")
 
-    return df
+    return df_out
