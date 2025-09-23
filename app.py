@@ -7,9 +7,9 @@ from rapidfuzz import process, fuzz
 from unidecode import unidecode
 import re
 
-# ==============================================================================
+# =======================================================================
 # 1. FUNÇÕES DE LIMPEZA AVANÇADA DE DADOS
-# ==============================================================================
+# =======================================================================
 def pre_limpeza(nome):
     nome = str(nome).lower()
     substituicoes = {
@@ -40,9 +40,56 @@ def normalizar_nome_avancado(nome):
     nome_final = re.sub(r'\s+', ' ', nome_final).strip()
     return nome_final
 
-# ==============================================================================
-# 2. FUNÇÕES DE LEITURA, MAPEAMENTO E COMPARAÇÃO
-# ==============================================================================
+# =======================================================================
+# 2. FUNÇÃO INTERNA DE PARSING DA SOUDVIEW WIDE FORMAT
+# =======================================================================
+def parse_soudview(df_bruto: pd.DataFrame) -> pd.DataFrame:
+    """
+    Parser para planilhas Soudview no formato wide:
+    Retorna: veiculo_soudview | comercial_soudview | data | horario
+    """
+    df = df_bruto.dropna(how="all").reset_index(drop=True)
+    df.columns = [str(c).strip() for c in df.columns]
+
+    veiculo = None
+    comercial = None
+    resultados = []
+
+    for i, row in df.iterrows():
+        # Detecta linha com veículo
+        if any(re.search(r"\b(FM|AM|TV)\b", str(cell)) for cell in row):
+            veiculo = str(row[0]).strip()
+            continue
+
+        # Detecta linha com comercial
+        if any(re.search(r"(SPOT|COMERCIAL|ANÚNCIO|ANUNCIO)", str(cell), re.I) for cell in row):
+            comercial = str(row[0]).strip()
+            continue
+
+        # Detecta linha com datas e horários
+        data_str = row[0] if pd.notna(row[0]) else None
+        if data_str and re.match(r"\d{2}/\d{2}/\d{2,4}", str(data_str)):
+            for col in row.index[1:]:
+                horario = row[col]
+                if pd.notna(horario):
+                    # Normaliza horário e data
+                    try:
+                        hora_dt = pd.to_datetime(str(horario), errors='coerce')
+                        data_dt = pd.to_datetime(str(data_str), dayfirst=True, errors='coerce')
+                        resultados.append({
+                            "veiculo_soudview": veiculo,
+                            "comercial_soudview": comercial,
+                            "data": data_dt.strftime("%Y-%m-%d") if pd.notna(data_dt) else None,
+                            "horario": hora_dt.strftime("%H:%M:%S") if pd.notna(hora_dt) else None
+                        })
+                    except:
+                        continue
+
+    return pd.DataFrame(resultados)
+
+# =======================================================================
+# 3. FUNÇÕES DE LEITURA E MAPEAMENTO
+# =======================================================================
 def ler_csv(file):
     file.seek(0)
     try:
@@ -125,9 +172,9 @@ def comparar_planilhas(df_soud, df_checking, limite_confianca):
 
     return relatorio[colunas_existentes]
 
-# ==============================================================================
-# 3. INTERFACE DO STREAMLIT
-# ==============================================================================
+# =======================================================================
+# 4. INTERFACE STREAMLIT
+# =======================================================================
 st.set_page_config(page_title="Validador de Checking", layout="wide")
 st.title("Painel de Validação de Checking 🛠️")
 
@@ -139,7 +186,6 @@ limite_confianca = st.sidebar.slider(
 )
 
 st.header("1. Carregue os Arquivos")
-
 col1, col2 = st.columns(2)
 with col1:
     checking_file = st.file_uploader("Planilha Principal (Checking)", type=["csv", "xlsx"])
@@ -151,8 +197,6 @@ if st.button("▶️ Iniciar Validação", use_container_width=True, type="prima
         st.warning("Por favor, carregue a Planilha Principal e a Planilha Soudview.")
     else:
         try:
-            from soudview import parse_soudview
-
             # === Ler Soudview ===
             soud_file.seek(0)
             if soud_file.name.endswith('.csv'):
@@ -165,11 +209,10 @@ if st.button("▶️ Iniciar Validação", use_container_width=True, type="prima
 
             df_soud = parse_soudview(df_soud_bruto)
 
-            # Diagnóstico
             with st.expander("🔍 Diagnóstico da Extração da Soudview", expanded=True):
                 st.info(f"A função parse_soudview retornou **{len(df_soud)} linhas**.")
                 if df_soud.empty:
-                    st.error("Tabela vazia. Ajuste a lógica no arquivo 'soudview.py'.")
+                    st.error("Tabela vazia. Ajuste a lógica de parsing.")
                     st.stop()
                 else:
                     st.success("Dados extraídos com sucesso! Amostra abaixo:")
@@ -195,7 +238,7 @@ if st.button("▶️ Iniciar Validação", use_container_width=True, type="prima
             # === Resultado ===
             st.header("2. Relatório da Comparação")
             if relatorio_final.empty:
-                st.warning("O relatório está vazio. Verifique se os dados e horários correspondem.")
+                st.warning("O relatório está vazio. Verifique os dados e horários.")
             else:
                 st.dataframe(relatorio_final)
                 output = io.BytesIO()
@@ -208,9 +251,8 @@ if st.button("▶️ Iniciar Validação", use_container_width=True, type="prima
                     use_container_width=True
                 )
 
-        except ImportError:
-            st.error("❌ Erro: não foi possível encontrar `parse_soudview`. Verifique o arquivo soudview.py.")
         except KeyError as e:
             st.error(f"❌ Erro de Coluna: {e}. Confira os cabeçalhos das planilhas.")
         except Exception as e:
             st.error(f"❌ Erro durante a execução: {e}")
+            st.exception(e)
