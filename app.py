@@ -8,13 +8,11 @@ from unidecode import unidecode
 import re
 
 # ==============================================================================
-# 1. FUNÇÕES DE LIMPEZA AVANÇADA DE DADOS
+# 1. FUNÇÕES DE LIMPEZA DE DADOS
 # ==============================================================================
 def pre_limpeza(nome):
     nome = str(nome).lower()
-    substituicoes = {
-        's.paulo': 'sao paulo', 'sp': 'sao paulo', 'rj': 'rio de janeiro', 'r.': 'radio',
-    }
+    substituicoes = {'s.paulo': 'sao paulo', 'sp': 'sao paulo', 'rj': 'rio de janeiro', 'r.': 'radio'}
     for antigo, novo in substituicoes.items():
         nome = re.sub(r'\b' + re.escape(antigo) + r'\b', novo, nome)
     return nome
@@ -41,18 +39,17 @@ def normalizar_nome_avancado(nome):
 def ler_csv(file):
     file.seek(0)
     try:
-        dialect = csv.Sniffer().sniff(file.read(1024).decode('utf-8'))
+        # Tenta detectar o separador (geralmente , ou ;)
+        dialect = csv.Sniffer().sniff(file.read(2048).decode('utf-8', errors='ignore'))
         sep = dialect.delimiter
     except (csv.Error, UnicodeDecodeError):
-        sep = ';'
+        sep = ',' # Padrão para CSV
     file.seek(0)
     return pd.read_csv(file, sep=sep, encoding='utf-8')
 
 def mapear_veiculo(nome, veiculos_principais, limite_confianca):
-    """Função de match que opera apenas por similaridade."""
     nome_norm = normalizar_nome_avancado(nome)
-    if not nome_norm:
-        return "NOME VAZIO", None, "⚪ Vazio"
+    if not nome_norm: return "NOME VAZIO", None, "⚪ Vazio"
     veiculos_principais_norm = [normalizar_nome_avancado(v) for v in veiculos_principais]
     if veiculos_principais_norm:
         melhor_match, score, _ = process.extractOne(nome_norm, veiculos_principais_norm, scorer=fuzz.WRatio)
@@ -61,10 +58,7 @@ def mapear_veiculo(nome, veiculos_principais, limite_confianca):
     return "NÃO ENCONTRADO", None, "❌ Não encontrado"
 
 def comparar_planilhas(df_soud, df_checking, limite_confianca):
-    """Orquestra todo o processo de comparação sem usar De/Para."""
-    # Retorna um DF vazio se o DF de entrada da Soudview estiver vazio
-    if df_soud.empty:
-        return pd.DataFrame()
+    if df_soud.empty: return pd.DataFrame()
 
     veiculos_principais = df_checking['emissora'].dropna().unique().tolist()
     resultados = df_soud['veiculo_soudview'].apply(lambda x: mapear_veiculo(x, veiculos_principais, limite_confianca))
@@ -75,10 +69,11 @@ def comparar_planilhas(df_soud, df_checking, limite_confianca):
     df_soud_norm = df_soud.copy()
     df_checking_norm = df_checking.copy()
     
+    # <<< ALTERAÇÃO AQUI: Usando as colunas corretas 'data' e 'hora' da planilha Checking >>>
     df_soud_norm['data_merge'] = pd.to_datetime(df_soud_norm['data'], errors='coerce').dt.strftime('%Y-%m-%d')
-    df_checking_norm['data_merge'] = pd.to_datetime(df_checking_norm['data veiculação'], dayfirst=True, errors='coerce').dt.strftime('%Y-%m-%d')
+    df_checking_norm['data_merge'] = pd.to_datetime(df_checking_norm['data'], dayfirst=True, errors='coerce').dt.strftime('%Y-%m-%d')
     df_soud_norm['horario_merge'] = pd.to_datetime(df_soud_norm['horario'], errors='coerce').dt.strftime('%H:%M')
-    df_checking_norm['horario_merge'] = pd.to_datetime(df_checking_norm['hora veiculação'], errors='coerce').dt.strftime('%H:%M')
+    df_checking_norm['horario_merge'] = pd.to_datetime(df_checking_norm['hora'], errors='coerce').dt.strftime('%H:%M')
     
     df_soud_norm.fillna({'data_merge': '', 'horario_merge': ''}, inplace=True)
     df_checking_norm.fillna({'data_merge': '', 'horario_merge': ''}, inplace=True)
@@ -89,9 +84,7 @@ def comparar_planilhas(df_soud, df_checking, limite_confianca):
     relatorio['status'] = np.where(relatorio['_merge'] == 'both', '✅ Encontrado', '❌ Não Encontrado')
     
     colunas_finais = ['veiculo_soudview', 'comercial_soudview', 'data', 'horario', 'veiculo_mapeado', 'score_similaridade', 'tipo_match', 'status']
-    colunas_existentes = [col for col in colunas_finais if col in relatorio.columns]
-    
-    return relatorio[colunas_existentes]
+    return relatorio[colunas_finais]
 
 # ==============================================================================
 # 3. INTERFACE DO STREAMLIT
@@ -101,14 +94,9 @@ st.set_page_config(page_title="Validador de Checking", layout="wide")
 st.title("Painel de Validação de Checking 🛠️")
 
 st.sidebar.header("⚙️ Controles de Match")
-limite_confianca = st.sidebar.slider(
-    "Nível de Confiança para Similaridade (%)",
-    min_value=60, max_value=100, value=85, step=1,
-    help="Define o quão parecido um nome deve ser para dar 'match' automático."
-)
+limite_confianca = st.sidebar.slider("Nível de Confiança para Similaridade (%)", 60, 100, 85, 1)
 
 st.header("1. Carregue os Arquivos")
-
 col1, col2 = st.columns(2)
 with col1:
     checking_file = st.file_uploader("Planilha Principal (Checking)", type=["csv", "xlsx", "xls"])
@@ -124,23 +112,20 @@ if st.button("▶️ Iniciar Validação", use_container_width=True, type="prima
             
             soud_file.seek(0)
             if soud_file.name.endswith('.csv'):
-                df_soud_bruto = ler_csv(soud_file)
+                df_soud_bruto = pd.read_csv(soud_file, header=None, sep=';') # CSV da Soudview parece usar ;
             else:
                 df_soud_bruto = pd.read_excel(soud_file, header=None)
             
-            # Etapa de extração dos dados da Soudview
             df_soud = parse_soudview(df_soud_bruto)
             
-            # --- FERRAMENTA DE DIAGNÓSTICO INTEGRADA ---
-            with st.expander("🔍 DIAGNÓSTICO DA EXTRAÇÃO DA SOUDVIEW", expanded=True):
-                st.info(f"A sua função 'parse_soudview' (no arquivo soudview.py) retornou uma tabela com **{len(df_soud)} linhas**.")
+            with st.expander("🔍 Diagnóstico da Extração da Soudview", expanded=True):
+                st.info(f"A função 'parse_soudview' retornou uma tabela com **{len(df_soud)} linhas**.")
                 if len(df_soud) == 0:
-                    st.error("A TABELA ESTÁ VAZIA. A comparação não pode continuar. Verifique e ajuste a lógica no seu arquivo 'soudview.py'.")
-                    st.stop() # Interrompe a execução se não houver dados
+                    st.error("A TABELA ESTÁ VAZIA. Verifique o arquivo 'soudview.py'.")
+                    st.stop()
                 else:
-                    st.success("Dados extraídos com sucesso! Amostra abaixo:")
+                    st.success("Amostra dos dados extraídos da Soudview:")
                     st.dataframe(df_soud.head())
-            # --- FIM DO DIAGNÓSTICO ---
             
             df_soud.columns = df_soud.columns.str.strip().str.lower()
 
@@ -150,22 +135,23 @@ if st.button("▶️ Iniciar Validação", use_container_width=True, type="prima
                 df_checking = pd.read_excel(checking_file)
             df_checking.columns = df_checking.columns.str.strip().str.lower()
             
-            with st.spinner("Analisando por similaridade..."):
+            with st.spinner("Comparando planilhas..."):
                 relatorio_final = comparar_planilhas(df_soud, df_checking, limite_confianca)
 
             st.header("2. Relatório da Comparação")
-            if relatorio_final.empty:
-                st.warning("O relatório final está vazio. Verifique se os dados e horários correspondem entre as planilhas.")
-            else:
-                st.dataframe(relatorio_final)
+            if relatorio_final.empty and not df_soud.empty:
+                st.warning("Nenhum match encontrado. Verifique se os dados e horários correspondem ou ajuste o Nível de Confiança.")
+            st.dataframe(relatorio_final)
+            
+            if not relatorio_final.empty:
                 output = io.BytesIO()
                 with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
                     relatorio_final.to_excel(writer, index=False, sheet_name="Relatorio")
                 st.download_button("📥 Baixar Relatório Final", output.getvalue(), "Relatorio_Final.xlsx", use_container_width=True)
 
         except ImportError:
-            st.error("Erro Crítico: Não foi possível encontrar a função `parse_soudview`. Verifique se o arquivo `soudview.py` está na mesma pasta do seu app.")
+            st.error("Erro Crítico: Não foi possível encontrar a função `parse_soudview`. Verifique se o arquivo `soudview.py` está na mesma pasta.")
         except KeyError as e:
-            st.error(f"Erro de Coluna: A coluna {e} não foi encontrada em uma das planilhas. Verifique se os nomes dos cabeçalhos estão corretos (ex: 'emissora', 'data veiculação', etc.).")
+            st.error(f"Erro de Coluna: A coluna {e} não foi encontrada. Verifique os nomes dos cabeçalhos nas suas planilhas.")
         except Exception as e:
-            st.error(f"Ocorreu um erro inesperado durante a execução: {e}")
+            st.error(f"Ocorreu um erro inesperado: {e}")
