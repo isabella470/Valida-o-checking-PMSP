@@ -1,3 +1,5 @@
+import pandas as pd
+
 def parse_soudview(df_raw: pd.DataFrame) -> pd.DataFrame:
     """
     Normaliza a planilha da Soudview para ter sempre as colunas:
