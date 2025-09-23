@@ -48,33 +48,26 @@ def ler_csv(file):
     file.seek(0)
     return pd.read_csv(file, sep=sep, encoding='utf-8')
 
-# <<< FUNÇÃO mapear_veiculo SIMPLIFICADA >>>
 def mapear_veiculo(nome, veiculos_principais, limite_confianca):
     """Função de match que opera apenas por similaridade."""
     nome_norm = normalizar_nome_avancado(nome)
     if not nome_norm:
         return "NOME VAZIO", None, "⚪ Vazio"
-
     veiculos_principais_norm = [normalizar_nome_avancado(v) for v in veiculos_principais]
-    
     if veiculos_principais_norm:
-        # Busca pelo nome mais similar na lista da planilha principal
         melhor_match, score, _ = process.extractOne(nome_norm, veiculos_principais_norm, scorer=fuzz.WRatio)
-        
         if score >= limite_confianca:
             return melhor_match, score, "🤖 Fuzzy Match"
-
     return "NÃO ENCONTRADO", None, "❌ Não encontrado"
 
-
-# <<< FUNÇÃO comparar_planilhas ATUALIZADA >>>
 def comparar_planilhas(df_soud, df_checking, limite_confianca):
     """Orquestra todo o processo de comparação sem usar De/Para."""
+    # Retorna um DF vazio se o DF de entrada da Soudview estiver vazio
+    if df_soud.empty:
+        return pd.DataFrame()
+
     veiculos_principais = df_checking['emissora'].dropna().unique().tolist()
-    
-    resultados = df_soud['veiculo_soudview'].apply(
-        lambda x: mapear_veiculo(x, veiculos_principais, limite_confianca)
-    )
+    resultados = df_soud['veiculo_soudview'].apply(lambda x: mapear_veiculo(x, veiculos_principais, limite_confianca))
     df_soud['veiculo_mapeado'] = [r[0] for r in resultados]
     df_soud['score_similaridade'] = [r[1] for r in resultados]
     df_soud['tipo_match'] = [r[2] for r in resultados]
@@ -111,11 +104,10 @@ st.sidebar.header("⚙️ Controles de Match")
 limite_confianca = st.sidebar.slider(
     "Nível de Confiança para Similaridade (%)",
     min_value=60, max_value=100, value=85, step=1,
-    help="Define o quão parecido um nome deve ser para dar 'match' automático. Ajuste este valor para ser mais ou menos restrito."
+    help="Define o quão parecido um nome deve ser para dar 'match' automático."
 )
 
 st.header("1. Carregue os Arquivos")
-# <<< REMOVIDO: Carregamento do 'depara.csv' não é mais necessário >>>
 
 col1, col2 = st.columns(2)
 with col1:
@@ -124,18 +116,32 @@ with col2:
     soud_file = st.file_uploader("Planilha Soudview", type=["csv", "xlsx", "xls"])
 
 if st.button("▶️ Iniciar Validação", use_container_width=True, type="primary"):
-    # <<< ALTERADO: Checagem simplificada sem o 'depara' >>>
     if not checking_file or not soud_file:
         st.warning("Por favor, carregue a Planilha Principal e a Planilha Soudview.")
     else:
         try:
             from soudview import parse_soudview
+            
             soud_file.seek(0)
             if soud_file.name.endswith('.csv'):
                 df_soud_bruto = ler_csv(soud_file)
             else:
                 df_soud_bruto = pd.read_excel(soud_file, header=None)
+            
+            # Etapa de extração dos dados da Soudview
             df_soud = parse_soudview(df_soud_bruto)
+            
+            # --- FERRAMENTA DE DIAGNÓSTICO INTEGRADA ---
+            with st.expander("🔍 DIAGNÓSTICO DA EXTRAÇÃO DA SOUDVIEW", expanded=True):
+                st.info(f"A sua função 'parse_soudview' (no arquivo soudview.py) retornou uma tabela com **{len(df_soud)} linhas**.")
+                if len(df_soud) == 0:
+                    st.error("A TABELA ESTÁ VAZIA. A comparação não pode continuar. Verifique e ajuste a lógica no seu arquivo 'soudview.py'.")
+                    st.stop() # Interrompe a execução se não houver dados
+                else:
+                    st.success("Dados extraídos com sucesso! Amostra abaixo:")
+                    st.dataframe(df_soud.head())
+            # --- FIM DO DIAGNÓSTICO ---
+            
             df_soud.columns = df_soud.columns.str.strip().str.lower()
 
             if checking_file.name.endswith('.csv'):
@@ -145,43 +151,17 @@ if st.button("▶️ Iniciar Validação", use_container_width=True, type="prima
             df_checking.columns = df_checking.columns.str.strip().str.lower()
             
             with st.spinner("Analisando por similaridade..."):
-                # <<< ALTERADO: Chamada da função sem o 'depara' >>>
                 relatorio_final = comparar_planilhas(df_soud, df_checking, limite_confianca)
 
             st.header("2. Relatório da Comparação")
-            st.dataframe(relatorio_final)
-
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-                relatorio_final.to_excel(writer, index=False, sheet_name="Relatorio")
-            st.download_button("📥 Baixar Relatório Final", output.getvalue(), "Relatorio_Final.xlsx", use_container_width=True)
-
-            # A ferramenta de diagnóstico continua útil para entender as pontuações
-            nao_encontrados = relatorio_final[relatorio_final['status'] == '❌ Não Encontrado']
-            if not nao_encontrados.empty:
-                st.header("3. Diagnóstico de Itens Não Encontrados ('Raio-X')")
-                st.warning("Itens com pontuação de similaridade abaixo do seu nível de confiança aparecerão aqui.")
-                
-                veiculos_falharam = nao_encontrados['veiculo_soudview'].unique()
-                veiculos_checking = df_checking['emissora'].dropna().unique()
-                veiculos_checking_norm_map = {normalizar_nome_avancado(v): v for v in veiculos_checking}
-
-                for veiculo in veiculos_falharam:
-                    with st.expander(f"🔍 Análise para: **{veiculo}**"):
-                        nome_normalizado = normalizar_nome_avancado(veiculo)
-                        st.write(f"Nome após limpeza avançada: `{nome_normalizado}`")
-                        st.write("Abaixo estão os 5 candidatos mais próximos da Planilha Principal:")
-                        
-                        candidatos = process.extract(nome_normalizado, veiculos_checking_norm_map.keys(), scorer=fuzz.WRatio, limit=5)
-                        
-                        if candidatos:
-                            nomes_originais = [veiculos_checking_norm_map[c[0]] for c in candidatos]
-                            scores = [round(c[1], 2) for c in candidatos]
-                            df_candidatos = pd.DataFrame({"Candidato na Planilha Principal": nomes_originais, "Pontuação de Similaridade (%)": scores})
-                            st.dataframe(df_candidatos, use_container_width=True)
-                            st.info(f"**Análise:** O melhor candidato ('{nomes_originais[0]}') teve uma pontuação de {scores[0]}%. Se este valor for menor que o seu Nível de Confiança ({limite_confianca}%), o match não é feito. Considere diminuir o nível de confiança se o match for correto.")
-                        else:
-                            st.write("Nenhum candidato razoável encontrado.")
+            if relatorio_final.empty:
+                st.warning("O relatório final está vazio. Verifique se os dados e horários correspondem entre as planilhas.")
+            else:
+                st.dataframe(relatorio_final)
+                output = io.BytesIO()
+                with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+                    relatorio_final.to_excel(writer, index=False, sheet_name="Relatorio")
+                st.download_button("📥 Baixar Relatório Final", output.getvalue(), "Relatorio_Final.xlsx", use_container_width=True)
 
         except ImportError:
             st.error("Erro Crítico: Não foi possível encontrar a função `parse_soudview`. Verifique se o arquivo `soudview.py` está na mesma pasta do seu app.")
