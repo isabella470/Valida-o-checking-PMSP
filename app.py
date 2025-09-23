@@ -3,34 +3,18 @@ import pandas as pd
 import numpy as np
 import io
 import csv
-import re
 from rapidfuzz import process, fuzz
 from unidecode import unidecode
-import os
-import importlib.util
+import re
 
-# ======================================================================
-# 0. GARANTIR QUE O soudview.py ESTÁ SENDO IMPORTADO
-# ======================================================================
-def importar_soudview():
-    if not os.path.exists("soudview.py"):
-        st.error("❌ O arquivo `soudview.py` não foi encontrado no mesmo diretório do `app.py`.")
-        st.stop()
-
-    spec = importlib.util.spec_from_file_location("soudview", "soudview.py")
-    soudview = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(soudview)
-    return soudview.parse_soudview
-
-parse_soudview = importar_soudview()
-
-# ======================================================================
+# ==============================================================================
 # 1. FUNÇÕES DE LIMPEZA AVANÇADA DE DADOS
-# ======================================================================
+# ==============================================================================
 def pre_limpeza(nome):
     nome = str(nome).lower()
     substituicoes = {
-        's.paulo': 'sao paulo', 'sp': 'sao paulo', 'rj': 'rio de janeiro', 'r.': 'radio',
+        's.paulo': 'sao paulo', 'sp': 'sao paulo',
+        'rj': 'rio de janeiro', 'r.': 'radio',
     }
     for antigo, novo in substituicoes.items():
         nome = re.sub(r'\b' + re.escape(antigo) + r'\b', novo, nome)
@@ -38,13 +22,17 @@ def pre_limpeza(nome):
 
 def remover_ruido(nome):
     nome = re.sub(r'\d+[\.,]\d+', '', nome)
-    palavras_ruido = ['ltda', 's/a', 'eireli', 'radio', 'tv', 'jornal', 'emissora', 'rede', 'fm', 'am']
+    palavras_ruido = [
+        'ltda', 's/a', 'eireli', 'radio', 'tv',
+        'jornal', 'emissora', 'rede', 'fm', 'am'
+    ]
     for palavra in palavras_ruido:
         nome = re.sub(r'\b' + palavra + r'\b', '', nome)
     return re.sub(r'\s+', ' ', nome).strip()
 
 def normalizar_nome_avancado(nome):
-    if pd.isna(nome): return ""
+    if pd.isna(nome):
+        return ""
     nome_limpo = pre_limpeza(nome)
     nome_limpo = remover_ruido(nome_limpo)
     nome_final = unidecode(nome_limpo)
@@ -52,9 +40,9 @@ def normalizar_nome_avancado(nome):
     nome_final = re.sub(r'\s+', ' ', nome_final).strip()
     return nome_final
 
-# ======================================================================
+# ==============================================================================
 # 2. FUNÇÕES DE LEITURA, MAPEAMENTO E COMPARAÇÃO
-# ======================================================================
+# ==============================================================================
 def ler_csv(file):
     file.seek(0)
     try:
@@ -66,22 +54,28 @@ def ler_csv(file):
     return pd.read_csv(file, sep=sep, encoding='utf-8')
 
 def mapear_veiculo(nome, veiculos_principais, limite_confianca):
+    """Função de match que opera apenas por similaridade."""
     nome_norm = normalizar_nome_avancado(nome)
     if not nome_norm:
         return "NOME VAZIO", None, "⚪ Vazio"
     veiculos_principais_norm = [normalizar_nome_avancado(v) for v in veiculos_principais]
     if veiculos_principais_norm:
-        melhor_match, score, _ = process.extractOne(nome_norm, veiculos_principais_norm, scorer=fuzz.WRatio)
+        melhor_match, score, _ = process.extractOne(
+            nome_norm, veiculos_principais_norm, scorer=fuzz.WRatio
+        )
         if score >= limite_confianca:
             return melhor_match, score, "🤖 Fuzzy Match"
     return "NÃO ENCONTRADO", None, "❌ Não encontrado"
 
 def comparar_planilhas(df_soud, df_checking, limite_confianca):
+    """Orquestra todo o processo de comparação sem usar De/Para."""
     if df_soud.empty:
         return pd.DataFrame()
 
     veiculos_principais = df_checking['emissora'].dropna().unique().tolist()
-    resultados = df_soud['veiculo_soudview'].apply(lambda x: mapear_veiculo(x, veiculos_principais, limite_confianca))
+    resultados = df_soud['veiculo_soudview'].apply(
+        lambda x: mapear_veiculo(x, veiculos_principais, limite_confianca)
+    )
     df_soud['veiculo_mapeado'] = [r[0] for r in resultados]
     df_soud['score_similaridade'] = [r[1] for r in resultados]
     df_soud['tipo_match'] = [r[2] for r in resultados]
@@ -89,15 +83,26 @@ def comparar_planilhas(df_soud, df_checking, limite_confianca):
     df_soud_norm = df_soud.copy()
     df_checking_norm = df_checking.copy()
 
-    df_soud_norm['data_merge'] = pd.to_datetime(df_soud_norm['data'], errors='coerce').dt.strftime('%Y-%m-%d')
-    df_checking_norm['data_merge'] = pd.to_datetime(df_checking_norm['data veiculação'], dayfirst=True, errors='coerce').dt.strftime('%Y-%m-%d')
-    df_soud_norm['horario_merge'] = pd.to_datetime(df_soud_norm['horario'], errors='coerce').dt.strftime('%H:%M')
-    df_checking_norm['horario_merge'] = pd.to_datetime(df_checking_norm['hora veiculação'], errors='coerce').dt.strftime('%H:%M')
+    df_soud_norm['data_merge'] = pd.to_datetime(
+        df_soud_norm['data'], errors='coerce'
+    ).dt.strftime('%Y-%m-%d')
+    df_checking_norm['data_merge'] = pd.to_datetime(
+        df_checking_norm['data veiculação'], dayfirst=True, errors='coerce'
+    ).dt.strftime('%Y-%m-%d')
+
+    df_soud_norm['horario_merge'] = pd.to_datetime(
+        df_soud_norm['horario'], errors='coerce'
+    ).dt.strftime('%H:%M')
+    df_checking_norm['horario_merge'] = pd.to_datetime(
+        df_checking_norm['hora veiculação'], errors='coerce'
+    ).dt.strftime('%H:%M')
 
     df_soud_norm.fillna({'data_merge': '', 'horario_merge': ''}, inplace=True)
     df_checking_norm.fillna({'data_merge': '', 'horario_merge': ''}, inplace=True)
 
-    df_checking_norm['veiculo_merge'] = df_checking_norm['emissora'].apply(normalizar_nome_avancado)
+    df_checking_norm['veiculo_merge'] = df_checking_norm['emissora'].apply(
+        normalizar_nome_avancado
+    )
 
     relatorio = pd.merge(
         df_soud_norm,
@@ -105,22 +110,25 @@ def comparar_planilhas(df_soud, df_checking, limite_confianca):
         left_on=['veiculo_mapeado', 'data_merge', 'horario_merge'],
         right_on=['veiculo_merge', 'data_merge', 'horario_merge'],
         how='left',
-        indicator=True
+        indicator=True,
     )
-    relatorio['status'] = np.where(relatorio['_merge'] == 'both', '✅ Encontrado', '❌ Não Encontrado')
+
+    relatorio['status'] = np.where(
+        relatorio['_merge'] == 'both', '✅ Encontrado', '❌ Não Encontrado'
+    )
 
     colunas_finais = [
         'veiculo_soudview', 'comercial_soudview', 'data', 'horario',
         'veiculo_mapeado', 'score_similaridade', 'tipo_match', 'status'
     ]
-    colunas_existentes = [col for col in colunas_finais if col in relatorio.columns]
+    colunas_existentes = [c for c in colunas_finais if c in relatorio.columns]
 
     return relatorio[colunas_existentes]
 
-# ======================================================================
+# ==============================================================================
 # 3. INTERFACE DO STREAMLIT
-# ======================================================================
-st.set_page_config(page_title="Validador de Checking", layout="wide") 
+# ==============================================================================
+st.set_page_config(page_title="Validador de Checking", layout="wide")
 st.title("Painel de Validação de Checking 🛠️")
 
 st.sidebar.header("⚙️ Controles de Match")
@@ -134,41 +142,60 @@ st.header("1. Carregue os Arquivos")
 
 col1, col2 = st.columns(2)
 with col1:
-    checking_file = st.file_uploader("Planilha Principal (Checking)", type=["csv", "xlsx", "xls"])
+    checking_file = st.file_uploader("Planilha Principal (Checking)", type=["csv", "xlsx"])
 with col2:
-    soud_file = st.file_uploader("Planilha Soudview", type=["csv", "xlsx", "xls"])
+    soud_file = st.file_uploader("Planilha Soudview", type=["csv", "xlsx"])
 
 if st.button("▶️ Iniciar Validação", use_container_width=True, type="primary"):
     if not checking_file or not soud_file:
         st.warning("Por favor, carregue a Planilha Principal e a Planilha Soudview.")
     else:
         try:
+            from soudview import parse_soudview
+
+            # === Ler Soudview ===
             soud_file.seek(0)
             if soud_file.name.endswith('.csv'):
                 df_soud_bruto = ler_csv(soud_file)
+            elif soud_file.name.endswith('.xlsx'):
+                df_soud_bruto = pd.read_excel(soud_file, engine="openpyxl", header=None)
             else:
-                df_soud_bruto = pd.read_excel(soud_file, header=None)
+                st.error("❌ Formato não suportado. Use apenas .csv ou .xlsx para Soudview.")
+                st.stop()
 
             df_soud = parse_soudview(df_soud_bruto)
 
+            # Diagnóstico
             with st.expander("🔍 Diagnóstico da Extração da Soudview", expanded=True):
-                st.info(f"A função `parse_soudview` retornou {len(df_soud)} linhas.")
-                st.dataframe(df_soud.head())
+                st.info(f"A função parse_soudview retornou **{len(df_soud)} linhas**.")
+                if df_soud.empty:
+                    st.error("Tabela vazia. Ajuste a lógica no arquivo 'soudview.py'.")
+                    st.stop()
+                else:
+                    st.success("Dados extraídos com sucesso! Amostra abaixo:")
+                    st.dataframe(df_soud.head())
 
             df_soud.columns = df_soud.columns.str.strip().str.lower()
 
+            # === Ler Checking ===
             if checking_file.name.endswith('.csv'):
                 df_checking = ler_csv(checking_file)
+            elif checking_file.name.endswith('.xlsx'):
+                df_checking = pd.read_excel(checking_file, engine="openpyxl")
             else:
-                df_checking = pd.read_excel(checking_file)
+                st.error("❌ Formato não suportado. Use apenas .csv ou .xlsx para Checking.")
+                st.stop()
+
             df_checking.columns = df_checking.columns.str.strip().str.lower()
 
-            with st.spinner("Analisando por similaridade..."):
+            # === Comparação ===
+            with st.spinner("🔎 Analisando por similaridade..."):
                 relatorio_final = comparar_planilhas(df_soud, df_checking, limite_confianca)
 
+            # === Resultado ===
             st.header("2. Relatório da Comparação")
             if relatorio_final.empty:
-                st.warning("O relatório final está vazio. Verifique se os dados e horários correspondem entre as planilhas.")
+                st.warning("O relatório está vazio. Verifique se os dados e horários correspondem.")
             else:
                 st.dataframe(relatorio_final)
                 output = io.BytesIO()
@@ -181,5 +208,9 @@ if st.button("▶️ Iniciar Validação", use_container_width=True, type="prima
                     use_container_width=True
                 )
 
+        except ImportError:
+            st.error("❌ Erro: não foi possível encontrar `parse_soudview`. Verifique o arquivo soudview.py.")
+        except KeyError as e:
+            st.error(f"❌ Erro de Coluna: {e}. Confira os cabeçalhos das planilhas.")
         except Exception as e:
             st.error(f"❌ Erro durante a execução: {e}")
