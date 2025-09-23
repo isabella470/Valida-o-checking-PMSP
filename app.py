@@ -39,11 +39,10 @@ def normalizar_nome_avancado(nome):
 def ler_csv(file):
     file.seek(0)
     try:
-        # Tenta detectar o separador (geralmente , ou ;)
         dialect = csv.Sniffer().sniff(file.read(2048).decode('utf-8', errors='ignore'))
         sep = dialect.delimiter
     except (csv.Error, UnicodeDecodeError):
-        sep = ',' # Padrão para CSV
+        sep = ','
     file.seek(0)
     return pd.read_csv(file, sep=sep, encoding='utf-8')
 
@@ -69,7 +68,6 @@ def comparar_planilhas(df_soud, df_checking, limite_confianca):
     df_soud_norm = df_soud.copy()
     df_checking_norm = df_checking.copy()
     
-    # <<< ALTERAÇÃO AQUI: Usando as colunas corretas 'data' e 'hora' da planilha Checking >>>
     df_soud_norm['data_merge'] = pd.to_datetime(df_soud_norm['data'], errors='coerce').dt.strftime('%Y-%m-%d')
     df_checking_norm['data_merge'] = pd.to_datetime(df_checking_norm['data'], dayfirst=True, errors='coerce').dt.strftime('%Y-%m-%d')
     df_soud_norm['horario_merge'] = pd.to_datetime(df_soud_norm['horario'], errors='coerce').dt.strftime('%H:%M')
@@ -112,35 +110,28 @@ if st.button("▶️ Iniciar Validação", use_container_width=True, type="prima
             
             soud_file.seek(0)
             if soud_file.name.endswith('.csv'):
-                df_soud_bruto = pd.read_csv(soud_file, header=None, sep=';') # CSV da Soudview parece usar ;
+                # O arquivo de exemplo da Soudview usa ';' como separador.
+                df_soud_bruto = pd.read_csv(soud_file, header=None, sep=';', on_bad_lines='skip')
             else:
                 df_soud_bruto = pd.read_excel(soud_file, header=None)
             
             df_soud = parse_soudview(df_soud_bruto)
             
-            with st.expander("🔍 Diagnóstico da Extração da Soudview", expanded=True):
-                st.info(f"A função 'parse_soudview' retornou uma tabela com **{len(df_soud)} linhas**.")
-                if len(df_soud) == 0:
-                    st.error("A TABELA ESTÁ VAZIA. Verifique o arquivo 'soudview.py'.")
-                    st.stop()
-                else:
-                    st.success("Amostra dos dados extraídos da Soudview:")
-                    st.dataframe(df_soud.head())
-            
-            df_soud.columns = df_soud.columns.str.strip().str.lower()
-
             if checking_file.name.endswith('.csv'):
                 df_checking = ler_csv(checking_file)
             else:
                 df_checking = pd.read_excel(checking_file)
             df_checking.columns = df_checking.columns.str.strip().str.lower()
             
-            with st.spinner("Comparando planilhas..."):
+            with st.spinner("Extraindo dados e comparando planilhas..."):
                 relatorio_final = comparar_planilhas(df_soud, df_checking, limite_confianca)
 
             st.header("2. Relatório da Comparação")
-            if relatorio_final.empty and not df_soud.empty:
-                st.warning("Nenhum match encontrado. Verifique se os dados e horários correspondem ou ajuste o Nível de Confiança.")
+            if df_soud.empty:
+                st.error("Nenhum dado foi extraído da planilha Soudview. Verifique o arquivo `soudview.py` e a planilha enviada.")
+            elif relatorio_final.empty:
+                st.warning("Dados extraídos com sucesso, mas nenhum match foi encontrado. Verifique se os dados e horários correspondem ou ajuste o Nível de Confiança.")
+            
             st.dataframe(relatorio_final)
             
             if not relatorio_final.empty:
@@ -150,8 +141,8 @@ if st.button("▶️ Iniciar Validação", use_container_width=True, type="prima
                 st.download_button("📥 Baixar Relatório Final", output.getvalue(), "Relatorio_Final.xlsx", use_container_width=True)
 
         except ImportError:
-            st.error("Erro Crítico: Não foi possível encontrar a função `parse_soudview`. Verifique se o arquivo `soudview.py` está na mesma pasta.")
+            st.error("Erro Crítico: O arquivo `soudview.py` não foi encontrado na mesma pasta do aplicativo.")
         except KeyError as e:
-            st.error(f"Erro de Coluna: A coluna {e} não foi encontrada. Verifique os nomes dos cabeçalhos nas suas planilhas.")
+            st.error(f"Erro de Coluna: A coluna {e} não foi encontrada. Verifique os cabeçalhos nas suas planilhas (ex: 'emissora', 'data', 'hora').")
         except Exception as e:
             st.error(f"Ocorreu um erro inesperado: {e}")
