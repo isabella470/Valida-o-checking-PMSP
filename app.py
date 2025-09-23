@@ -7,8 +7,9 @@ from rapidfuzz import process, fuzz
 from unidecode import unidecode
 import re
 
-# (Cole aqui todas as suas funções de limpeza: pre_limpeza, remover_ruido, normalizar_nome_avancado)
-# ...
+# ==============================================================================
+# 1. FUNÇÕES DE LIMPEZA DE DADOS (Sem alterações)
+# ==============================================================================
 def pre_limpeza(nome):
     nome = str(nome).lower()
     substituicoes = {'s.paulo': 'sao paulo', 'sp': 'sao paulo', 'rj': 'rio de janeiro', 'r.': 'radio'}
@@ -31,8 +32,10 @@ def normalizar_nome_avancado(nome):
     nome_final = re.sub(r'[^a-z0-9 ]', '', nome_final)
     nome_final = re.sub(r'\s+', ' ', nome_final).strip()
     return nome_final
-# (As funções ler_csv, mapear_veiculo, e comparar_planilhas também continuam iguais à última versão)
-# ...
+
+# ==============================================================================
+# 2. FUNÇÕES DE LEITURA, MAPEAMENTO E COMPARAÇÃO (Sem alterações)
+# ==============================================================================
 def ler_csv(file):
     file.seek(0)
     try:
@@ -79,10 +82,11 @@ def comparar_planilhas(df_soud, df_checking, limite_confianca):
     colunas_finais = ['veiculo_soudview', 'comercial_soudview', 'data', 'horario', 'veiculo_mapeado', 'score_similaridade', 'tipo_match', 'status']
     return relatorio[colunas_finais]
 
-# =======================================================================
-# 4. INTERFACE STREAMLIT
-# =======================================================================
-st.set_page_config(page_title="Validador de Checking", layout="wide")
+# ==============================================================================
+# 3. INTERFACE DO STREAMLIT
+# ==============================================================================
+
+st.set_page_config(page_title="Validador de Checking", layout="wide") 
 st.title("Painel de Validação de Checking 🛠️")
 
 st.sidebar.header("⚙️ Controles de Match")
@@ -104,17 +108,17 @@ if st.button("▶️ Iniciar Validação", use_container_width=True, type="prima
             
             soud_file.seek(0)
             if soud_file.name.endswith('.csv'):
-                df_soud_bruto = pd.read_csv(soud_file, header=None, sep=None, engine='python', on_bad_lines='skip')
+                # <<< CORREÇÃO DEFINITIVA AQUI >>>
+                # Forçando o uso do ponto-e-vírgula (;) como separador.
+                df_soud_bruto = pd.read_csv(soud_file, header=None, sep=';', on_bad_lines='skip')
             else:
                 df_soud_bruto = pd.read_excel(soud_file, engine="openpyxl", header=None)
 
-            # <<< ALTERAÇÃO AQUI: Captura o dataframe E o log >>>
+            # A partir daqui, o resto do código já estava correto.
             df_soud, parse_log = parse_soudview(df_soud_bruto)
 
             with st.expander("🔍 Diagnóstico da Extração da Soudview", expanded=True):
-                # <<< ALTERAÇÃO AQUI: Exibe o log detalhado >>>
                 st.text_area("Log de Processamento do 'soudview.py':", "".join(parse_log), height=300)
-                
                 st.info(f"A função de extração da Soudview retornou **{len(df_soud)} linhas**.")
                 if df_soud.empty:
                     st.error("Nenhum dado extraído. Analise o log acima para ver por que as linhas foram ignoradas.")
@@ -123,7 +127,6 @@ if st.button("▶️ Iniciar Validação", use_container_width=True, type="prima
                     st.success("Amostra dos dados extraídos:")
                     st.dataframe(df_soud.head())
 
-            # O resto do código continua normalmente...
             if checking_file.name.endswith('.csv'):
                 df_checking = ler_csv(checking_file)
             else:
