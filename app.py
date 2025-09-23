@@ -14,6 +14,7 @@ import re
 def pre_limpeza(nome):
     """Padroniza abreviações e termos comuns ANTES da normalização principal."""
     nome = str(nome).lower()
+    # A correção do NameError está aqui: a variável agora se chama 'substituicoes' nos dois lugares.
     substituicoes = {
         's.paulo': 'sao paulo',
         'sp': 'sao paulo',
@@ -21,39 +22,27 @@ def pre_limpeza(nome):
         'r.': 'radio',
         # Adicione outras substituições que você identificar aqui
     }
-    for antigo, novo in substituições.items():
-        # Usa \b para garantir que 'sp' não vire 'sao paulo' dentro de uma palavra
+    for antigo, novo in substituicoes.items():
         nome = re.sub(r'\b' + re.escape(antigo) + r'\b', novo, nome)
     return nome
 
 def remover_ruido(nome):
     """Remove informações que mais atrapalham do que ajudam na comparação."""
-    # Remove números com pontos ou vírgulas (frequências de rádio, etc.)
     nome = re.sub(r'\d+[\.,]\d+', '', nome)
-    
-    # Lista de palavras genéricas a serem removidas
     palavras_ruido = ['ltda', 's/a', 'eireli', 'radio', 'tv', 'jornal', 'emissora', 'rede', 'fm', 'am']
-    
     for palavra in palavras_ruido:
         nome = re.sub(r'\b' + palavra + r'\b', '', nome)
-
-    # Remove espaços duplos que podem ter sido criados
     return re.sub(r'\s+', ' ', nome).strip()
 
 def normalizar_nome_avancado(nome):
     """Pipeline completo de limpeza e normalização de nomes."""
     if pd.isna(nome):
         return ""
-    
-    # Aplica as novas etapas de limpeza
     nome_limpo = pre_limpeza(nome)
     nome_limpo = remover_ruido(nome_limpo)
-    
-    # Aplica a normalização padrão
     nome_final = unidecode(nome_limpo)
     nome_final = re.sub(r'[^a-z0-9 ]', '', nome_final)
     nome_final = re.sub(r'\s+', ' ', nome_final).strip()
-    
     return nome_final
 
 # ==============================================================================
@@ -77,7 +66,6 @@ def carregar_depara(caminho="depara.csv"):
     try:
         df = pd.read_csv(caminho)
         df.columns = df.columns.str.strip().str.lower()
-        # Usa a nova função de normalização avançada
         df['veiculo_soudview'] = df['veiculo_soudview'].apply(normalizar_nome_avancado)
         df['veiculos boxnet'] = df['veiculos boxnet'].apply(normalizar_nome_avancado)
         return df
@@ -86,17 +74,15 @@ def carregar_depara(caminho="depara.csv"):
         return pd.DataFrame(columns=['veiculo_soudview', 'veiculos boxnet'])
 
 def mapear_veiculo(nome, df_depara, veiculos_principais, limite_confianca):
-    """Função central de match, agora usando a normalização avançada."""
+    """Função central de match, usando a normalização avançada."""
     nome_norm = normalizar_nome_avancado(nome)
     if not nome_norm:
         return "NOME VAZIO", None, "⚪ Vazio"
 
-    # 1. Busca Exata no De/Para
     encontrado = df_depara[df_depara['veiculo_soudview'] == nome_norm]
     if not encontrado.empty:
         return encontrado['veiculos boxnet'].values[0], 100, "✅ De/Para"
 
-    # 2. Fuzzy Match (Similaridade)
     veiculos_principais_norm = [normalizar_nome_avancado(v) for v in veiculos_principais]
     if veiculos_principais_norm:
         melhor_checking, score_checking, _ = process.extractOne(nome_norm, veiculos_principais_norm, scorer=fuzz.WRatio)
@@ -116,7 +102,6 @@ def comparar_planilhas(df_soud, df_checking, df_depara, limite_confianca):
     df_soud['score_similaridade'] = [r[1] for r in resultados]
     df_soud['tipo_match'] = [r[2] for r in resultados]
     
-    # Preparação para o merge
     df_soud_norm = df_soud.copy()
     df_checking_norm = df_checking.copy()
     
@@ -145,7 +130,6 @@ def comparar_planilhas(df_soud, df_checking, df_depara, limite_confianca):
 st.set_page_config(page_title="Validador de Checking", layout="wide") 
 st.title("Painel de Validação de Checking 🛠️")
 
-# --- Barra Lateral com Controles ---
 st.sidebar.header("⚙️ Controles de Match")
 limite_confianca = st.sidebar.slider(
     "Nível de Confiança para Similaridade (%)",
@@ -163,8 +147,8 @@ with col2:
     soud_file = st.file_uploader("Planilha Soudview", type=["xlsx", "xls"])
 
 if st.button("▶️ Iniciar Validação", use_container_width=True, type="primary"):
-    if not checking_file or not soud_file or df_depara.empty:
-        st.warning("Por favor, carregue a Planilha Principal, a Planilha Soudview e verifique se o arquivo 'depara.csv' existe.")
+    if not checking_file or not soud_file or (df_depara is not None and df_depara.empty):
+        st.warning("Por favor, carregue a Planilha Principal, a Planilha Soudview e verifique se o arquivo 'depara.csv' existe e não está vazio.")
     else:
         try:
             from soudview import parse_soudview
@@ -189,7 +173,6 @@ if st.button("▶️ Iniciar Validação", use_container_width=True, type="prima
                 relatorio_final.to_excel(writer, index=False, sheet_name="Relatorio")
             st.download_button("📥 Baixar Relatório Final", output.getvalue(), "Relatorio_Final.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
 
-            # --- Ferramenta de Diagnóstico ---
             nao_encontrados = relatorio_final[relatorio_final['status'] == '❌ Não Encontrado']
             if not nao_encontrados.empty:
                 st.header("3. Diagnóstico de Itens Não Encontrados ('Raio-X')")
@@ -198,7 +181,6 @@ if st.button("▶️ Iniciar Validação", use_container_width=True, type="prima
                 veiculos_falharam = nao_encontrados['veiculo_soudview'].unique()
                 veiculos_checking = df_checking['veículo boxnet'].dropna().unique()
                 
-                # Criamos um dicionário para busca rápida: {nome_normalizado: nome_original}
                 veiculos_checking_norm_map = {normalizar_nome_avancado(v): v for v in veiculos_checking}
 
                 for veiculo in veiculos_falharam:
