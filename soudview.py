@@ -1,16 +1,17 @@
-# soudview.py
+# soudview.py (VERSÃO CORRIGIDA E APRIMORADA)
 import pandas as pd
 import re
+from datetime import time
 
 def parse_soudview(df_bruto: pd.DataFrame):
     """
     Parser inteligente com log de diagnóstico para entender o processo de extração.
+    Esta versão prioriza a detecção de linhas de dados e possui regras de cabeçalho mais rígidas.
     Retorna um DataFrame de resultados e uma lista de mensagens de log.
     """
     log = []
-    log.append("--- Iniciando o parser da Soudview ---")
+    log.append("--- Iniciando o parser da Soudview (v2 - Lógica Aprimorada) ---")
     
-    # Remove linhas e colunas completamente vazias para limpar o input
     df = df_bruto.dropna(how="all").dropna(how="all", axis=1).reset_index(drop=True)
     log.append(f"DataFrame limpo. Formato inicial: {df.shape[0]} linhas, {df.shape[1]} colunas.")
 
@@ -19,73 +20,68 @@ def parse_soudview(df_bruto: pd.DataFrame):
     resultados = []
 
     for i, row in df.iterrows():
-        # Se a linha for vazia ou a primeira célula for nula, pula para a próxima
         if row.empty or pd.isna(row.iloc[0]):
             continue
             
         primeira_celula = str(row.iloc[0]).strip()
         log.append(f"Linha {i}: Analisando célula 'A' -> '{primeira_celula}'")
 
-        # Tenta detectar se a linha é um cabeçalho de veículo
-        if any(re.search(r"\b(FM|AM|TV|RÁDIO|RADIO|REDE)\b", str(cell).upper()) for cell in row if pd.notna(cell)):
-            if len(re.findall(r'[a-zA-Z]', primeira_celula)) > 3: # Garante que não é só um "TV" perdido
-                veiculo_atual = primeira_celula
-                log.append(f"  -> DETECTADO como VEÍCULO. Novo contexto: '{veiculo_atual}'")
-                continue
+        # 1. DETECÇÃO DE DADOS (MAIS IMPORTANTE):
+        # Procura por múltiplas células que parecem ser horários. É um indicador forte de uma linha de dados.
+        horarios_encontrados_texto = []
+        for cell in row[1:]: # Ignora a primeira célula que deve ser a data
+            if pd.notna(cell):
+                cell_str = str(cell).strip()
+                if re.match(r'^\d{1,2}:\d{2}:\d{2}', cell_str):
+                    horarios_encontrados_texto.append(cell_str)
 
-        # Tenta detectar se a linha é um cabeçalho de comercial
-        if any(re.search(r"(SPOT|COMERCIAL|ANÚNCIO|ANUNCIO)", str(cell), re.I) for cell in row if pd.notna(cell)):
-            comercial_atual = primeira_celula
-            log.append(f"  -> DETECTADO como COMERCIAL. Novo contexto: '{comercial_atual}'")
-            continue
-
-        # Tenta detectar se a primeira célula da linha é uma data
-        if re.match(r"^\d{1,2}/\d{1,2}(/\d{2,4})?$", primeira_celula):
-            log.append(f"  -> DETECTADO como linha de DADOS. Processando horários...")
-            data_str = primeira_celula
-            horarios_encontrados = 0
+        if len(horarios_encontrados_texto) > 0:
+            log.append(f"  -> DETECTADO como linha de DADOS (encontrou {len(horarios_encontrados_texto)} horário(s) na linha).")
             
-            # Converte a data uma vez
+            data_str = primeira_celula
             data_dt = pd.to_datetime(data_str, dayfirst=True, errors='coerce')
-            if pd.isna(data_dt):
-                log.append(f"    -> AVISO: A data '{data_str}' é inválida. Pulando linha.")
-                continue
 
-            # Itera por todas as outras células da linha para encontrar os horários
-            for horario in row[1:]:
-                if pd.isna(horario) or str(horario).strip() == '':
-                    continue
-                
-                hora_obj = None # Reseta para cada célula
+            if pd.isna(data_dt):
+                log.append(f"    -> AVISO: A data na primeira célula ('{data_str}') é inválida. Pulando linha de dados.")
+                continue
+            
+            horarios_processados = 0
+            for horario_str in horarios_encontrados_texto:
                 try:
-                    if isinstance(horario, (float, int)): # Formato de hora do Excel (ex: 0.41667)
-                        total_seconds = int(horario * 24 * 60 * 60)
-                        minutes, seconds = divmod(total_seconds, 60)
-                        hours, minutes = divmod(minutes, 60)
-                        # Garante que não ultrapasse 24h
-                        if 0 <= hours < 24:
-                            hora_obj = pd.to_datetime(f"{hours}:{minutes}:{seconds}", format='%H:%M:%S').time()
-                    else: # Formato de texto ou datetime
-                        # Tenta converter para datetime e pegar apenas a hora
-                        horario_parseado = pd.to_datetime(str(horario), errors='coerce')
-                        if pd.notna(horario_parseado):
-                            hora_obj = horario_parseado.time()
-                    
+                    hora_obj = pd.to_datetime(horario_str, errors='coerce').time()
                     if hora_obj:
                         resultados.append({
                             "veiculo_soudview": veiculo_atual,
                             "comercial_soudview": comercial_atual,
-                            "data": data_dt.date(), # Salva como objeto date
-                            "horario": hora_obj     # Salva como objeto time
+                            "data": data_dt.date(),
+                            "horario": hora_obj
                         })
-                        horarios_encontrados += 1
+                        horarios_processados += 1
                 except (ValueError, TypeError, AttributeError):
-                    # Ignora células que não podem ser convertidas para hora
-                    continue
-            log.append(f"    -> {horarios_encontrados} horários válidos encontrados e adicionados.")
-            continue
+                    continue # Ignora se a conversão do horário falhar
+            
+            log.append(f"    -> {horarios_processados} horários válidos foram processados e adicionados.")
+            continue # Pula para a próxima linha
+
+        # 2. DETECÇÃO DE CABEÇALHO (REGRAS MAIS RÍGIDAS)
+        # Só executa se não for uma linha de dados.
+        is_veiculo_candidate = any(re.search(r"\b(FM|AM|TV|RÁDIO|RADIO|REDE)\b", str(cell).upper()) for cell in row if pd.notna(cell))
+        if is_veiculo_candidate:
+            # Regra adicional: não deve parecer um cabeçalho de relatório como 'PI DE...'
+            if len(re.findall(r'[a-zA-Z]', primeira_celula)) > 3 and not re.match(r'^(PI|CS)\s+DE', primeira_celula.upper()):
+                veiculo_atual = primeira_celula
+                log.append(f"  -> DETECTADO como VEÍCULO. Novo contexto de veículo: '{veiculo_atual}'")
+                continue
+
+        is_comercial_candidate = any(re.search(r"(SPOT|COMERCIAL|ANÚNCIO|ANUNCIO)", str(cell), re.I) for cell in row if pd.notna(cell))
+        if is_comercial_candidate:
+            # Regra adicional: não deve parecer um cabeçalho de relatório
+            if not re.match(r'^(PI|CS)\s+DE', primeira_celula.upper()):
+                comercial_atual = primeira_celula
+                log.append(f"  -> DETECTADO como COMERCIAL. Novo contexto de comercial: '{comercial_atual}'")
+                continue
         
-        log.append("  -> Linha não correspondeu a nenhum padrão (veículo, comercial ou data). Ignorando.")
+        log.append("  -> Linha não correspondeu a nenhum padrão (dados, veículo ou comercial). Ignorando.")
 
     log.append(f"\n--- Fim do parser. Total de {len(resultados)} registros encontrados. ---")
     return pd.DataFrame(resultados), log
