@@ -44,6 +44,10 @@ def normalizar_veiculo(texto):
 def comparar_planilhas(df_soud, df_checking):
     """Compara planilhas com validações robustas"""
     
+    # Mostra informações de debug
+    st.info(f"🔍 Debug: Soudview tem {len(df_soud)} registros")
+    st.info(f"🔍 Debug: Colunas Soudview: {df_soud.columns.tolist()}")
+    
     # Validação do DataFrame Soudview
     colunas_esperadas_soud = ['veiculo_soudview', 'comercial_soudview', 'data', 'horario']
     colunas_faltantes = [col for col in colunas_esperadas_soud if col not in df_soud.columns]
@@ -59,6 +63,8 @@ def comparar_planilhas(df_soud, df_checking):
     col_horario = 'HORA VEICULAÇÃO'
     col_campanha_checking = 'CAMPANHA'
 
+    st.info(f"🔍 Debug: Colunas Checking: {df_checking.columns.tolist()}")
+    
     for col in [col_veiculo, col_data, col_horario, col_campanha_checking]:
         if col not in df_checking.columns:
             st.error(f"❌ Coluna '{col}' não encontrada na planilha principal.")
