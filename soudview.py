@@ -4,158 +4,98 @@ from datetime import time
 
 def parse_soudview(df_bruto: pd.DataFrame):
     """
-    Parser robusto para extrair dados da planilha Soudview.
-    Prioriza detecção correta de Veículo (com palavras-chave de rádio/TV)
-    vs Campanha/Comercial (texto genérico).
-    Retorna: (DataFrame de resultados, lista de logs)
+    Parser da Soudview usando a LÓGICA ORIGINAL que funcionava.
+    Esta versão prioriza a detecção de linhas de dados e possui regras de cabeçalho mais rígidas.
+    Retorna um DataFrame de resultados e uma lista de mensagens de log.
     """
     log = []
-    log.append("=== INICIANDO PARSER SOUDVIEW v4 ===")
-    log.append(f"Formato inicial: {df_bruto.shape[0]} linhas × {df_bruto.shape[1]} colunas\n")
+    log.append("--- Iniciando o parser da Soudview (v2 - Lógica Original) ---")
     
-    # Limpa o DataFrame
     df = df_bruto.dropna(how="all").dropna(how="all", axis=1).reset_index(drop=True)
-    log.append(f"Após limpeza: {df.shape[0]} linhas × {df.shape[1]} colunas")
-    
-    # Mostra primeiras linhas para diagnóstico
-    log.append("\n--- PRIMEIRAS 10 LINHAS (para diagnóstico) ---")
-    for i in range(min(10, len(df))):
-        if i < len(df) and len(df.iloc[i]) > 0:
-            primeira_celula = str(df.iloc[i, 0]) if not pd.isna(df.iloc[i, 0]) else "VAZIO"
-            log.append(f"Linha {i}: '{primeira_celula[:80]}'")
-    log.append("--- FIM DO PREVIEW ---\n")
+    log.append(f"DataFrame limpo. Formato inicial: {df.shape[0]} linhas, {df.shape[1]} colunas.")
 
-    # Contexto atual
     veiculo_atual = "Veículo não identificado"
     comercial_atual = "Comercial não identificado"
     resultados = []
 
-    # Padrões para detecção
-    PATTERN_HORARIO = re.compile(r'^\d{1,2}:\d{2}(?::\d{2})?$')
-    PATTERN_DATA = re.compile(r'^\d{1,2}[/-]\d{1,2}[/-]\d{2,4}$')
-    
-    # Palavras-chave FORTES para identificar veículos (rádios/TVs)
-    KEYWORDS_VEICULO_FORTE = [
-        'RÁDIO', 'RADIO', 'FM', 'AM', 
-        'REDE', 'TV', 'EMISSORA', 'BANDEIRANTES',
-        'GLOBO', 'RECORD', 'SBT', 'BAND', 'JOVEM PAN'
-    ]
-    
-    # Palavras que indicam que NÃO é um veículo
-    KEYWORDS_NAO_VEICULO = [
-        'CAMPANHA', 'SPOT', 'COMERCIAL', 'ANÚNCIO', 'ANUNCIO',
-        'PRESTAÇÃO', 'PRESTACAO', 'SERVIÇOS', 'SERVICOS',
-        'PRODUTO', 'MARCA'
-    ]
-
     for i, row in df.iterrows():
         if row.empty or pd.isna(row.iloc[0]):
             continue
-        
+            
         primeira_celula = str(row.iloc[0]).strip()
-        primeira_celula_upper = primeira_celula.upper()
-        
-        # Ignora linhas de cabeçalho de relatório
-        if re.match(r'^(PI|CS)\s+DE\s+', primeira_celula_upper):
-            log.append(f"Linha {i}: Ignorando cabeçalho de relatório")
-            continue
-        
-        # PRIORIDADE 1: DETECTAR LINHAS DE DADOS
-        # Procura por horários na linha (exceto primeira coluna que deve ser data)
-        horarios_na_linha = []
-        for idx, cell in enumerate(row[1:], start=1):
+        log.append(f"Linha {i}: Analisando célula 'A' -> '{primeira_celula}'")
+
+        # 1. DETECÇÃO DE DADOS (MAIS IMPORTANTE):
+        # Procura por múltiplas células que parecem ser horários. É um indicador forte de uma linha de dados.
+        horarios_encontrados_texto = []
+        for cell in row[1:]: # Ignora a primeira célula que deve ser a data
             if pd.notna(cell):
                 cell_str = str(cell).strip()
-                if PATTERN_HORARIO.match(cell_str):
-                    horarios_na_linha.append((idx, cell_str))
-        
-        # Se encontrou horários, é uma linha de dados
-        if len(horarios_na_linha) > 0:
-            # Valida se primeira célula é uma data
-            if not PATTERN_DATA.match(primeira_celula):
-                log.append(f"Linha {i}: ⚠️ Horários encontrados mas primeira célula não parece data: '{primeira_celula}'")
-                continue
+                if re.match(r'^\d{1,2}:\d{2}:\d{2}', cell_str):
+                    horarios_encontrados_texto.append(cell_str)
+
+        if len(horarios_encontrados_texto) > 0:
+            log.append(f"  -> DETECTADO como linha de DADOS (encontrou {len(horarios_encontrados_texto)} horário(s) na linha).")
             
-            data_dt = pd.to_datetime(primeira_celula, dayfirst=True, errors='coerce')
+            data_str = primeira_celula
+            data_dt = pd.to_datetime(data_str, dayfirst=True, errors='coerce')
+
             if pd.isna(data_dt):
-                log.append(f"Linha {i}: ❌ Data inválida: '{primeira_celula}'")
+                log.append(f"    -> AVISO: A data na primeira célula ('{data_str}') é inválida. Pulando linha de dados.")
                 continue
             
-            log.append(f"Linha {i}: ✅ DADOS - Data: {primeira_celula} | {len(horarios_na_linha)} horário(s)")
-            
-            # Processa cada horário
-            for col_idx, horario_str in horarios_na_linha:
+            horarios_processados = 0
+            for horario_str in horarios_encontrados_texto:
                 try:
-                    # Normaliza horário (adiciona segundos se necessário)
-                    if horario_str.count(':') == 1:
-                        horario_str += ':00'
-                    
-                    hora_obj = pd.to_datetime(horario_str, format='%H:%M:%S', errors='coerce').time()
-                    
-                    if hora_obj and hora_obj != time(0, 0):
+                    hora_obj = pd.to_datetime(horario_str, errors='coerce').time()
+                    if hora_obj:
                         resultados.append({
                             "veiculo_soudview": veiculo_atual,
                             "comercial_soudview": comercial_atual,
                             "data": data_dt.date(),
                             "horario": hora_obj
                         })
-                        log.append(f"    → Adicionado: V:[{veiculo_atual[:30]}] C:[{comercial_atual[:30]}] {horario_str}")
-                    else:
-                        log.append(f"    → ⚠️ Horário inválido ignorado: {horario_str}")
-                        
-                except Exception as e:
-                    log.append(f"    → ❌ Erro ao processar horário '{horario_str}': {e}")
+                        horarios_processados += 1
+                except (ValueError, TypeError, AttributeError):
+                    continue # Ignora se a conversão do horário falhar
             
-            continue  # Próxima linha
-        
-        # PRIORIDADE 2: DETECTAR VEÍCULO (com regras estritas)
-        # Deve conter palavras-chave FORTES de veículo E NÃO conter palavras de campanha
-        tem_palavra_veiculo = any(keyword in primeira_celula_upper for keyword in KEYWORDS_VEICULO_FORTE)
-        tem_palavra_nao_veiculo = any(keyword in primeira_celula_upper for keyword in KEYWORDS_NAO_VEICULO)
-        
-        if tem_palavra_veiculo and not tem_palavra_nao_veiculo:
-            # Validação extra: deve ter mais de 5 caracteres
-            if len(primeira_celula) > 5:
-                veiculo_atual = primeira_celula
-                log.append(f"Linha {i}: 📻 VEÍCULO: '{veiculo_atual}'")
-                continue
-        
-        # PRIORIDADE 3: DETECTAR COMERCIAL/CAMPANHA
-        # Se não é veículo e não é data/horário, provavelmente é comercial
-        if not PATTERN_DATA.match(primeira_celula) and not PATTERN_HORARIO.match(primeira_celula):
-            # Se tem palavras de campanha OU se é um texto longo sem palavras de veículo
-            if tem_palavra_nao_veiculo or (len(primeira_celula) > 10 and not tem_palavra_veiculo):
-                comercial_atual = primeira_celula
-                log.append(f"Linha {i}: 📢 COMERCIAL/CAMPANHA: '{comercial_atual}'")
-                continue
-        
-        # Se chegou aqui, linha não foi identificada
-        if len(primeira_celula) > 50:
-            log.append(f"Linha {i}: ⊘ Não identificada - '{primeira_celula[:50]}...'")
-        else:
-            log.append(f"Linha {i}: ⊘ Não identificada - '{primeira_celula}'")
+            log.append(f"    -> {horarios_processados} horários válidos foram processados e adicionados.")
+            continue # Pula para a próxima linha
 
-    log.append(f"\n=== FIM DO PARSER ===")
-    log.append(f"✅ Total de registros extraídos: {len(resultados)}")
+        # 2. DETECÇÃO DE CABEÇALHO (REGRAS MAIS RÍGIDAS)
+        # Só executa se não for uma linha de dados.
+        is_veiculo_candidate = any(re.search(r"\b(FM|AM|TV|RÁDIO|RADIO|REDE)\b", str(cell).upper()) for cell in row if pd.notna(cell))
+        if is_veiculo_candidate:
+            # Regra adicional: não deve parecer um cabeçalho de relatório como 'PI DE...'
+            if len(re.findall(r'[a-zA-Z]', primeira_celula)) > 3 and not re.match(r'^(PI|CS)\s+DE', primeira_celula.upper()):
+                veiculo_atual = primeira_celula
+                log.append(f"  -> DETECTADO como VEÍCULO. Novo contexto de veículo: '{veiculo_atual}'")
+                continue
+
+        is_comercial_candidate = any(re.search(r"(SPOT|COMERCIAL|ANÚNCIO|ANUNCIO)", str(cell), re.I) for cell in row if pd.notna(cell))
+        if is_comercial_candidate:
+            # Regra adicional: não deve parecer um cabeçalho de relatório
+            if not re.match(r'^(PI|CS)\s+DE', primeira_celula.upper()):
+                comercial_atual = primeira_celula
+                log.append(f"  -> DETECTADO como COMERCIAL. Novo contexto de comercial: '{comercial_atual}'")
+                continue
+        
+        log.append("  -> Linha não correspondeu a nenhum padrão (dados, veículo ou comercial). Ignorando.")
+
+    log.append(f"\n--- Fim do parser. Total de {len(resultados)} registros encontrados. ---")
     
-    if len(resultados) == 0:
-        log.append("\n⚠️ ATENÇÃO: Nenhum registro foi extraído!")
-        log.append("Possíveis causas:")
-        log.append("  - Formato da planilha não corresponde ao esperado")
-        log.append("  - Datas não estão no formato reconhecido (DD/MM/YYYY ou DD-MM-YYYY)")
-        log.append("  - Horários não estão no formato HH:MM ou HH:MM:SS")
-        log.append("  - Faltam linhas de cabeçalho com palavras-chave de rádio/TV")
-    else:
-        # Mostra resumo dos veículos e comerciais encontrados
-        veiculos_unicos = pd.DataFrame(resultados)['veiculo_soudview'].unique()
-        comerciais_unicos = pd.DataFrame(resultados)['comercial_soudview'].unique()
+    if len(resultados) > 0:
+        # Mostra resumo
+        df_result = pd.DataFrame(resultados)
+        veiculos_unicos = df_result['veiculo_soudview'].unique()
+        comerciais_unicos = df_result['comercial_soudview'].unique()
         
         log.append(f"\n📊 RESUMO:")
-        log.append(f"Veículos encontrados ({len(veiculos_unicos)}):")
+        log.append(f"Veículos únicos encontrados ({len(veiculos_unicos)}):")
         for v in veiculos_unicos:
             log.append(f"  - {v}")
         
-        log.append(f"\nComerciais/Campanhas encontrados ({len(comerciais_unicos)}):")
+        log.append(f"\nComerciais únicos encontrados ({len(comerciais_unicos)}):")
         for c in comerciais_unicos:
             log.append(f"  - {c}")
     
