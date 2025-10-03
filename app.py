@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import io
 import csv
+import re
 from rapidfuzz import process, fuzz
 
 # Tenta importar parse_soudview do arquivo local
