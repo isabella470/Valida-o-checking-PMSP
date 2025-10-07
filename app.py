@@ -1,27 +1,20 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import io
 import csv
-import logging
-from datetime import datetime
+import re
+from rapidfuzz import process, fuzz
 
-# Importa módulos locais
+# Tenta importar parse_soudview do arquivo local
 try:
     from soudview import parse_soudview
-    from comparador import ComparadorPlanilhas
-except ImportError as e:
-    st.error(f"❌ Erro ao importar módulos: {e}")
-    st.info("Certifique-se de que 'soudview.py' e 'comparador.py' estão no mesmo diretório.")
+except ImportError:
+    st.error("ERRO CRÍTICO: O arquivo 'soudview.py' não foi encontrado no mesmo diretório.")
     st.stop()
 
-# Configuração de logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-# ================== FUNÇÕES AUXILIARES ==================
-
-def detectar_separador(file) -> str:
-    """Detecta o separador de um arquivo CSV"""
+# ---------------- Funções ----------------
+def detectar_separador(file):
     file.seek(0)
     try:
         sample = file.read(1024).decode('utf-8', errors='ignore')
@@ -33,360 +26,277 @@ def detectar_separador(file) -> str:
         file.seek(0)
     return delimiter
 
-def ler_csv(file) -> pd.DataFrame:
-    """Lê arquivo CSV detectando automaticamente o separador"""
+def ler_csv(file):
     sep = detectar_separador(file)
     return pd.read_csv(file, sep=sep, encoding='utf-8', engine='python')
 
-def exportar_excel(df_resultado: pd.DataFrame, stats: dict) -> bytes:
-    """
-    Exporta resultado e estatísticas para Excel
-    
-    Args:
-        df_resultado: DataFrame com resultado da comparação
-        stats: Dicionário com estatísticas
-        
-    Returns:
-        Bytes do arquivo Excel
-    """
-    output = io.BytesIO()
-    
-    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-        # Aba principal com resultados
-        df_resultado.to_excel(writer, index=False, sheet_name="Resultado")
-        
-        # Aba com estatísticas gerais
-        df_stats = pd.DataFrame({
-            'Métrica': ['Total de Registros', 'Encontrados', 'Não Encontrados', 'Taxa de Match (%)'],
-            'Valor': [
-                stats['total'], 
-                stats['encontrados'], 
-                stats['nao_encontrados'],
-                stats['taxa_match']
-            ]
-        })
-        df_stats.to_excel(writer, index=False, sheet_name="Estatisticas_Gerais")
-        
-        # Aba com estatísticas por veículo
-        if 'por_veiculo' in stats and stats['por_veiculo']:
-            df_veiculos = pd.DataFrame.from_dict(
-                stats['por_veiculo'], 
-                orient='index'
-            ).reset_index()
-            df_veiculos.columns = ['Veículo', 'Encontrados', 'Total', 'Taxa_Match (%)']
-            df_veiculos.to_excel(writer, index=False, sheet_name="Por_Veiculo")
-        
-        # Formatação
-        workbook = writer.book
-        
-        # Formato para percentuais
-        percent_format = workbook.add_format({'num_format': '0.00"%"'})
-        
-        # Aplica formatação condicional
-        worksheet = writer.sheets['Resultado']
-        worksheet.set_column('G:G', 15)  # Coluna Status
-        
-    output.seek(0)
-    return output.getvalue()
+def normalizar_veiculo(texto):
+    """Normaliza nome do veículo mantendo espaços importantes"""
+    if pd.isna(texto):
+        return ""
+    texto = str(texto).strip().upper()
+    # Remove múltiplos espaços mas mantém um espaço simples
+    texto = re.sub(r'\s+', ' ', texto)
+    # Remove caracteres especiais mas mantém letras, números e espaços
+    texto = re.sub(r'[^\w\s]', '', texto)
+    return texto
 
-def criar_visualizacao_stats(stats: dict):
-    """Cria visualização das estatísticas"""
-    col1, col2, col3, col4 = st.columns(4)
+def comparar_planilhas(df_soud, df_checking):
+    """Compara planilhas com validações robustas"""
     
-    with col1:
-        st.metric(
-            "📊 Total de Registros", 
-            f"{stats['total']:,}".replace(',', '.')
-        )
+    # Mostra informações de debug
+    st.info(f"🔍 Debug: Soudview tem {len(df_soud)} registros")
+    st.info(f"🔍 Debug: Colunas Soudview: {df_soud.columns.tolist()}")
     
-    with col2:
-        st.metric(
-            "✅ Encontrados", 
-            f"{stats['encontrados']:,}".replace(',', '.'),
-            delta=f"{stats['taxa_match']:.1f}%"
-        )
+    # Validação do DataFrame Soudview
+    colunas_esperadas_soud = ['veiculo_soudview', 'comercial_soudview', 'data', 'horario']
+    colunas_faltantes = [col for col in colunas_esperadas_soud if col not in df_soud.columns]
     
-    with col3:
-        st.metric(
-            "❌ Não Encontrados", 
-            f"{stats['nao_encontrados']:,}".replace(',', '.'),
-            delta=f"{100 - stats['taxa_match']:.1f}%",
-            delta_color="inverse"
-        )
+    if colunas_faltantes:
+        st.error(f"❌ Colunas faltando na Soudview: {colunas_faltantes}")
+        st.info(f"Colunas encontradas: {df_soud.columns.tolist()}")
+        return pd.DataFrame()
     
-    with col4:
-        st.metric(
-            "🎯 Taxa de Match",
-            f"{stats['taxa_match']:.1f}%"
-        )
+    # Validação do DataFrame Checking
+    col_veiculo = 'VEÍCULO BOXNET'
+    col_data = 'DATA VEICULAÇÃO'
+    col_horario = 'HORA VEICULAÇÃO'
+    col_campanha_checking = 'CAMPANHA'
 
-# ================== CONFIGURAÇÃO STREAMLIT ==================
-
-st.set_page_config(
-    page_title="Validador de Checking",
-    page_icon="🛠️",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
-# CSS customizado
-st.markdown("""
-<style>
-    .stMetric {
-        background-color: #f0f2f6;
-        padding: 10px;
-        border-radius: 5px;
-    }
-    .success-box {
-        background-color: #d4edda;
-        padding: 15px;
-        border-radius: 5px;
-        border-left: 5px solid #28a745;
-    }
-    .warning-box {
-        background-color: #fff3cd;
-        padding: 15px;
-        border-radius: 5px;
-        border-left: 5px solid #ffc107;
-    }
-</style>
-""", unsafe_allow_html=True)
-
-# ================== SIDEBAR ==================
-
-with st.sidebar:
-    st.title("⚙️ Configurações")
+    st.info(f"🔍 Debug: Colunas Checking: {df_checking.columns.tolist()}")
     
-    st.subheader("Parâmetros de Comparação")
-    threshold_match = st.slider(
-        "Score mínimo para match de veículos",
-        min_value=60,
-        max_value=100,
-        value=85,
-        step=5,
-        help="Quanto maior, mais rigorosa a comparação (recomendado: 80-90)"
+    for col in [col_veiculo, col_data, col_horario, col_campanha_checking]:
+        if col not in df_checking.columns:
+            st.error(f"❌ Coluna '{col}' não encontrada na planilha principal.")
+            st.info(f"Colunas encontradas: {df_checking.columns.tolist()}")
+            return pd.DataFrame()
+
+    # --- PREPARAÇÃO DF_CHECKING ---
+    df_checking_sp = df_checking[
+        df_checking[col_veiculo].str.contains("SÃO PAULO", case=False, na=False)
+    ].copy()
+    
+    if df_checking_sp.empty:
+        st.warning("⚠️ Nenhum registro de São Paulo encontrado na planilha principal.")
+        return pd.DataFrame()
+    
+    # Normaliza datas e horários
+    df_checking_sp['data_norm'] = pd.to_datetime(
+        df_checking_sp[col_data], dayfirst=True, errors='coerce'
+    ).dt.date
+    
+    df_checking_sp['horario_norm'] = pd.to_datetime(
+        df_checking_sp[col_horario], errors='coerce', format='%H:%M:%S'
+    ).dt.time
+    
+    df_checking_sp['horario_minuto'] = df_checking_sp['horario_norm'].apply(
+        lambda x: x.strftime('%H:%M') if pd.notna(x) else None
     )
     
-    filtro_local = st.text_input(
-        "Filtro de localização",
-        value="SÃO PAULO",
-        help="Texto para filtrar registros do Checking"
+    # Normaliza veículos
+    df_checking_sp['veiculo_norm'] = df_checking_sp[col_veiculo].apply(normalizar_veiculo)
+
+    # --- PREPARAÇÃO DF_SOUDVIEW ---
+    df_soud = df_soud.copy()
+    
+    # Normaliza campos da Soudview
+    df_soud['veiculo_norm'] = df_soud['veiculo_soudview'].apply(normalizar_veiculo)
+    
+    df_soud['horario_minuto'] = df_soud['horario'].apply(
+        lambda x: x.strftime('%H:%M') if pd.notna(x) else None
     )
     
-    st.divider()
+    df_soud['data_norm'] = pd.to_datetime(df_soud['data'], errors='coerce').dt.date
+
+    # Remove registros inválidos
+    df_soud = df_soud.dropna(subset=['data_norm', 'horario_minuto'])
     
-    st.subheader("📝 Sobre")
-    st.info(
-        """
-        **Validador de Checking v2.0**
+    if df_soud.empty:
+        st.error("❌ Nenhum registro válido encontrado na Soudview após normalização.")
+        return pd.DataFrame()
+
+    # --- FUZZY MATCHING DE VEÍCULOS ---
+    veiculos_soudview = df_soud['veiculo_norm'].dropna().unique()
+    veiculos_checking = df_checking_sp['veiculo_norm'].dropna().unique()
+
+    st.info(f"🔍 Comparando {len(veiculos_soudview)} veículos da Soudview com {len(veiculos_checking)} do Checking")
+
+    mapa_veiculos = {}
+    mapa_scores = {}
+    
+    for veiculo_soud in veiculos_soudview:
+        if not veiculo_soud or veiculo_soud == "VEÍCULO NÃO IDENTIFICADO":
+            mapa_veiculos[veiculo_soud] = "NÃO MAPEADO"
+            mapa_scores[veiculo_soud] = 0
+            continue
+            
+        res = process.extractOne(veiculo_soud, veiculos_checking, scorer=fuzz.token_set_ratio)
         
-        Compara dados da Soudview com a planilha principal
-        de checking usando:
-        - Fuzzy matching para veículos
-        - Correspondência exata de data/hora
-        - Normalização de texto
-        """
+        if res:
+            match, score, _ = res
+            if score >= 80:
+                mapa_veiculos[veiculo_soud] = match
+                mapa_scores[veiculo_soud] = score
+            else:
+                mapa_veiculos[veiculo_soud] = "NÃO MAPEADO"
+                mapa_scores[veiculo_soud] = score
+        else:
+            mapa_veiculos[veiculo_soud] = "NÃO MAPEADO"
+            mapa_scores[veiculo_soud] = 0
+
+    df_soud['veiculo_mapeado'] = df_soud['veiculo_norm'].map(mapa_veiculos)
+    df_soud['score_mapeamento'] = df_soud['veiculo_norm'].map(mapa_scores)
+
+    # --- MERGE ---
+    relatorio = pd.merge(
+        df_soud,
+        df_checking_sp,
+        left_on=['veiculo_mapeado', 'data_norm', 'horario_minuto', 'comercial_soudview'],
+        right_on=['veiculo_norm', 'data_norm', 'horario_minuto', col_campanha_checking],
+        how='left',
+        indicator=True
     )
 
-# ================== INTERFACE PRINCIPAL ==================
+    relatorio['Status'] = np.where(
+        relatorio['_merge'] == 'both', 
+        '✅ Já no Checking', 
+        '❌ Não encontrado'
+    )
+    
+    # Renomeia e seleciona colunas finais
+    colunas_finais = {
+        'veiculo_soudview': 'Veiculo_Soudview',
+        'comercial_soudview': 'Comercial_Soudview',
+        'data': 'Data_Soudview',
+        'horario': 'Horario_Soudview',
+        'veiculo_mapeado': 'Veiculo_Mapeado',
+        'score_mapeamento': 'Score_Match',
+        'Status': 'Status'
+    }
+    
+    relatorio = relatorio.rename(columns=colunas_finais)
+    
+    return relatorio[list(colunas_finais.values())]
 
-st.title("🛠️ Painel de Validação de Checking")
+# ---------------- STREAMLIT UI ----------------
+st.set_page_config(page_title="Validador de Checking", layout="wide")
+st.title("Painel de Validação de Checking 🛠️")
 
-tab1, tab2 = st.tabs(["📋 Validação Soudview", "📊 Análise de Dados"])
-
-# ========== TAB 1: VALIDAÇÃO SOUDVIEW ==========
+tab1, tab2 = st.tabs(["Validação Checking", "Validação Soudview"])
 
 with tab1:
-    st.header("Validação da Soudview vs. Planilha Principal")
-    
-    # Upload de arquivos
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        checking_file = st.file_uploader(
-            "📁 Planilha Principal (Checking)",
-            type=["csv"],
-            help="Faça upload da planilha de checking em formato CSV"
-        )
-        if checking_file:
-            st.success(f"✓ Arquivo carregado: {checking_file.name}")
-    
-    with col2:
-        soud_file = st.file_uploader(
-            "📁 Planilha Soudview",
-            type=["csv"],
-            help="Faça upload da planilha Soudview em formato CSV"
-        )
-        if soud_file:
-            st.success(f"✓ Arquivo carregado: {soud_file.name}")
-    
-    st.divider()
-    
-    # Botão de processamento
-    if st.button(
-        "🚀 Iniciar Validação",
-        use_container_width=True,
-        type="primary",
-        disabled=not (checking_file and soud_file)
-    ):
-        
-        with st.spinner("🔄 Processando arquivos... Isso pode levar alguns instantes."):
-            try:
-                # ===== ETAPA 1: Leitura dos arquivos =====
-                progress_bar = st.progress(0)
-                status_text = st.empty()
-                
-                status_text.text("📖 Lendo arquivos...")
-                df_raw_soud = ler_csv(soud_file)
-                df_checking = ler_csv(checking_file)
-                progress_bar.progress(20)
-                
-                # ===== ETAPA 2: Parse da Soudview =====
-                status_text.text("🔍 Processando Soudview...")
-                df_soud, log_soudview = parse_soudview(df_raw_soud)
-                progress_bar.progress(40)
-                
-                # Mostra log de processamento
-                with st.expander("📋 Ver Log de Processamento da Soudview"):
-                    st.code('\n'.join(log_soudview), language='text')
-                
-                if df_soud.empty:
-                    st.error("❌ Não foi possível extrair dados da planilha Soudview.")
-                    st.info("💡 Verifique o log acima e o formato do arquivo.")
-                    st.stop()
-                
-                st.success(f"✅ {len(df_soud)} veiculações extraídas da Soudview!")
-                
-                # ===== ETAPA 3: Comparação =====
-                status_text.text("⚖️ Comparando planilhas...")
-                comparador = ComparadorPlanilhas(threshold_match=threshold_match)
-                
-                try:
-                    df_resultado = comparador.comparar(df_soud, df_checking)
-                    progress_bar.progress(80)
-                    
-                    # ===== ETAPA 4: Estatísticas =====
-                    status_text.text("📊 Gerando estatísticas...")
-                    stats = comparador.gerar_estatisticas(df_resultado)
-                    progress_bar.progress(100)
-                    
-                    status_text.empty()
-                    progress_bar.empty()
-                    
-                    # ===== RESULTADOS =====
-                    st.success("✅ Validação concluída com sucesso!")
-                    
-                    st.divider()
-                    
-                    # Métricas principais
-                    st.subheader("📈 Resumo Geral")
-                    criar_visualizacao_stats(stats)
-                    
-                    st.divider()
-                    
-                    # Tabela de resultados
-                    st.subheader("📊 Resultados Detalhados")
-                    
-                    # Filtros
-                    col1, col2, col3 = st.columns(3)
-                    
-                    with col1:
-                        filtro_status = st.multiselect(
-                            "Filtrar por Status:",
-                            options=df_resultado['Status'].unique(),
-                            default=df_resultado['Status'].unique()
-                        )
-                    
-                    with col2:
-                        veiculos_disponiveis = sorted(df_resultado['Veiculo_Original'].unique())
-                        filtro_veiculo = st.multiselect(
-                            "Filtrar por Veículo:",
-                            options=veiculos_disponiveis
-                        )
-                    
-                    with col3:
-                        filtro_data = st.date_input(
-                            "Filtrar por Data:",
-                            value=None
-                        )
-                    
-                    # Aplica filtros
-                    df_filtrado = df_resultado[df_resultado['Status'].isin(filtro_status)]
-                    
-                    if filtro_veiculo:
-                        df_filtrado = df_filtrado[
-                            df_filtrado['Veiculo_Original'].isin(filtro_veiculo)
-                        ]
-                    
-                    if filtro_data:
-                        df_filtrado = df_filtrado[
-                            pd.to_datetime(df_filtrado['Data']).dt.date == filtro_data
-                        ]
-                    
-                    # Exibe tabela
-                    st.dataframe(
-                        df_filtrado,
-                        use_container_width=True,
-                        height=400
-                    )
-                    
-                    st.caption(f"Mostrando {len(df_filtrado)} de {len(df_resultado)} registros")
-                    
-                    # Estatísticas por veículo
-                    if stats['por_veiculo']:
-                        with st.expander("📊 Estatísticas por Veículo"):
-                            df_stats_veiculo = pd.DataFrame.from_dict(
-                                stats['por_veiculo'],
-                                orient='index'
-                            ).reset_index()
-                            df_stats_veiculo.columns = ['Veículo', 'Encontrados', 'Total', 'Taxa Match (%)']
-                            df_stats_veiculo = df_stats_veiculo.sort_values('Taxa Match (%)', ascending=False)
-                            
-                            st.dataframe(df_stats_veiculo, use_container_width=True)
-                    
-                    st.divider()
-                    
-                    # Exportação
-                    st.subheader("💾 Exportar Resultado")
-                    
-                    col1, col2 = st.columns([3, 1])
-                    
-                    with col1:
-                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                        nome_arquivo = f"Relatorio_Validacao_{timestamp}.xlsx"
-                    
-                    with col2:
-                        excel_data = exportar_excel(df_resultado, stats)
-                        st.download_button(
-                            label="📥 Baixar Excel",
-                            data=excel_data,
-                            file_name=nome_arquivo,
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            use_container_width=True
-                        )
-                    
-                except Exception as e:
-                    st.error(f"❌ Erro durante a comparação: {str(e)}")
-                    logger.exception("Erro durante comparação")
-                    with st.expander("🔍 Detalhes do erro"):
-                        st.exception(e)
-                
-            except Exception as e:
-                st.error(f"❌ Erro durante o processamento: {str(e)}")
-                logger.exception("Erro durante processamento")
-                with st.expander("🔍 Detalhes do erro"):
-                    st.exception(e)
-
-# ========== TAB 2: ANÁLISE DE DADOS ==========
+    st.info("Funcionalidade da Aba 1 a ser implementada.")
 
 with tab2:
-    st.header("📊 Análise de Dados")
-    st.info("🚧 Funcionalidade em desenvolvimento")
-    
-    st.markdown("""
-    ### Próximas funcionalidades:
-    - 📈 Gráficos de tendência temporal
-    - 🎯 Análise de taxa de match por período
-    - 📊 Dashboard interativo
-    - 📉 Identificação de padrões de erro
-    """)
+    st.subheader("Validação da Soudview vs. Planilha Principal")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        checking_file = st.file_uploader(
+            "Passo 1: Faça upload da Planilha Principal (CSV)", 
+            type=["csv"]
+        )
+    with col2:
+        soud_file = st.file_uploader(
+            "Passo 2: Faça upload da Planilha Soudview (CSV)", 
+            type=["csv"]
+        )
+
+    if st.button("▶️ Iniciar Validação Soudview", use_container_width=True, type="primary"):
+        if not checking_file or not soud_file:
+            st.warning("⚠️ Por favor, faça o upload dos dois arquivos para iniciar a validação.")
+        else:
+            with st.spinner("🔄 Analisando arquivos... Por favor, aguarde."):
+                try:
+                    # Lê os arquivos
+                    df_raw_soud = ler_csv(soud_file)
+                    df_checking = ler_csv(checking_file)
+
+                    # Processa Soudview
+                    df_soud, log_soudview = parse_soudview(df_raw_soud)
+                    
+                    # Mostra log de diagnóstico
+                    with st.expander("📋 Ver Log de Processamento da Soudview"):
+                        st.code('\n'.join(log_soudview))
+
+                    if df_soud.empty:
+                        st.error("❌ Não foi possível extrair dados da planilha Soudview.")
+                        st.info("💡 Verifique o log acima e o formato do arquivo.")
+                    else:
+                        st.success(f"✅ {len(df_soud)} veiculações extraídas com sucesso da Soudview!")
+                        
+                        # Mostra prévia dos dados extraídos
+                        with st.expander("👀 Prévia dos Dados Extraídos da Soudview"):
+                            st.dataframe(df_soud.head(10))
+
+                        # Compara planilhas
+                        relatorio_final = comparar_planilhas(df_soud, df_checking)
+                        
+                        if not relatorio_final.empty:
+                            # Estatísticas
+                            total = len(relatorio_final)
+                            encontrados = (relatorio_final['Status'] == '✅ Já no Checking').sum()
+                            nao_encontrados = total - encontrados
+                            
+                            col1, col2, col3 = st.columns(3)
+                            col1.metric("Total de Registros", total)
+                            col2.metric("Encontrados no Checking", encontrados, 
+                                       delta=f"{(encontrados/total*100):.1f}%")
+                            col3.metric("Não Encontrados", nao_encontrados,
+                                       delta=f"{(nao_encontrados/total*100):.1f}%",
+                                       delta_color="inverse")
+                            
+                            st.subheader("📊 Relatório Final da Comparação")
+                            
+                            # Filtros
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                filtro_status = st.multiselect(
+                                    "Filtrar por Status:",
+                                    options=relatorio_final['Status'].unique(),
+                                    default=relatorio_final['Status'].unique()
+                                )
+                            with col2:
+                                filtro_veiculo = st.multiselect(
+                                    "Filtrar por Veículo:",
+                                    options=relatorio_final['Veiculo_Soudview'].unique()
+                                )
+                            
+                            # Aplica filtros
+                            df_filtrado = relatorio_final[
+                                relatorio_final['Status'].isin(filtro_status)
+                            ]
+                            if filtro_veiculo:
+                                df_filtrado = df_filtrado[
+                                    df_filtrado['Veiculo_Soudview'].isin(filtro_veiculo)
+                                ]
+                            
+                            st.dataframe(df_filtrado, use_container_width=True)
+
+                            # Exporta para Excel
+                            output = io.BytesIO()
+                            with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+                                relatorio_final.to_excel(writer, index=False, sheet_name="Relatorio")
+                                
+                                # Adiciona estatísticas em outra aba
+                                stats = pd.DataFrame({
+                                    'Métrica': ['Total de Registros', 'Encontrados', 'Não Encontrados'],
+                                    'Valor': [total, encontrados, nao_encontrados],
+                                    'Percentual': [100, encontrados/total*100, nao_encontrados/total*100]
+                                })
+                                stats.to_excel(writer, index=False, sheet_name="Estatisticas")
+                            
+                            output.seek(0)
+                            st.download_button(
+                                label="📥 Baixar Relatório Final em Excel",
+                                data=output,
+                                file_name="Relatorio_Validacao_Soudview.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                use_container_width=True
+                            )
+                        else:
+                            st.warning("⚠️ Não foi possível gerar o relatório de comparação.")
+                            
+                except Exception as e:
+                    st.error(f"❌ Ocorreu um erro inesperado durante o processamento.")
+                    st.exception(e)
